@@ -4,7 +4,10 @@
  */
 
 import { Mat4 } from './math.js';
-import { BasicVertexShader, SolidFragmentShader, WaterFragmentShader } from './shaders.js';
+import {
+  BasicVertexShader, SolidFragmentShader, WaterFragmentShader,
+  PlayerVertexShader, PlayerFragmentShader,
+} from './shaders.js';
 
 /**
  * Renderer - WebGL 渲染器
@@ -29,6 +32,7 @@ class Renderer {
     // 编译着色器程序
     this.solidProgram = this._createProgram(BasicVertexShader, SolidFragmentShader);
     this.waterProgram = this._createProgram(BasicVertexShader, WaterFragmentShader);
+    this.playerProgram = this._createProgram(PlayerVertexShader, PlayerFragmentShader);
 
     // 获取 attribute / uniform 位置 (固体)
     this.solidLocations = {
@@ -47,6 +51,16 @@ class Renderer {
       uMVP: gl.getUniformLocation(this.waterProgram, 'uMVP'),
       uCameraPos: gl.getUniformLocation(this.waterProgram, 'uCameraPos'),
       uTime: gl.getUniformLocation(this.waterProgram, 'uTime'),
+    };
+
+    // 获取 attribute / uniform 位置 (玩家模型)
+    this.playerLocations = {
+      aPosition: gl.getAttribLocation(this.playerProgram, 'aPosition'),
+      aNormal:   gl.getAttribLocation(this.playerProgram, 'aNormal'),
+      aColor:    gl.getAttribLocation(this.playerProgram, 'aColor'),
+      uModel:    gl.getUniformLocation(this.playerProgram, 'uModel'),
+      uVP:       gl.getUniformLocation(this.playerProgram, 'uVP'),
+      uCameraPos: gl.getUniformLocation(this.playerProgram, 'uCameraPos'),
     };
 
     // GL 状态
@@ -211,6 +225,63 @@ class Renderer {
     
     for (const bufs of this.chunkBuffers.values()) {
       this._drawBufferSet(bufs.water, this.waterLocations);
+    }
+
+    // 保存 VP 矩阵，供 drawPlayer 使用
+    this._vpMatrix = projMatrix.multiply(viewMatrix);
+    this._cameraPos = cameraPos;
+  }
+
+  /**
+   * 渲染玩家模型（仅第三人称时调用）
+   * @param {Array} parts - player.getModelParts() 的返回值
+   */
+  drawPlayer(parts) {
+    const gl = this.gl;
+    if (!parts || parts.length === 0) return;
+
+    gl.useProgram(this.playerProgram);
+    const locs = this.playerLocations;
+
+    // 上传 VP 矩阵和相机位置
+    gl.uniformMatrix4fv(locs.uVP, false, this._vpMatrix.m);
+    if (this._cameraPos) {
+      gl.uniform3f(locs.uCameraPos, this._cameraPos.x, this._cameraPos.y, this._cameraPos.z);
+    }
+
+    for (const part of parts) {
+      // 上传部件模型矩阵
+      gl.uniformMatrix4fv(locs.uModel, false, part.modelMatrix);
+
+      // 创建临时 Buffer（每帧重建，因为有动画）
+      const posBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, part.positions, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(locs.aPosition);
+      gl.vertexAttribPointer(locs.aPosition, 3, gl.FLOAT, false, 0, 0);
+
+      const normBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, part.normals, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(locs.aNormal);
+      gl.vertexAttribPointer(locs.aNormal, 3, gl.FLOAT, false, 0, 0);
+
+      const colBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, part.colors, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(locs.aColor);
+      gl.vertexAttribPointer(locs.aColor, 3, gl.FLOAT, false, 0, 0);
+
+      const idxBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, part.indices, gl.DYNAMIC_DRAW);
+      gl.drawElements(gl.TRIANGLES, part.indices.length, gl.UNSIGNED_SHORT, 0);
+
+      // 清理临时 buffer
+      gl.deleteBuffer(posBuf);
+      gl.deleteBuffer(normBuf);
+      gl.deleteBuffer(colBuf);
+      gl.deleteBuffer(idxBuf);
     }
   }
 

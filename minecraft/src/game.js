@@ -200,6 +200,12 @@ class Game {
     // 传入相机眼睛位置给渲染器，用于雾气计算
     this.renderer.render(viewMatrix, projMatrix, eye);
 
+    // 第三人称时渲染玩家模型
+    if (this.player.isThirdPerson()) {
+      const parts = this.player.getModelParts();
+      this.renderer.drawPlayer(parts);
+    }
+
     // 更新 HUD
     this._updateHUD();
   }

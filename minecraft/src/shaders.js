@@ -74,6 +74,62 @@ export const SolidFragmentShader = `
   }
 `;
 
+/**
+ * 玩家模型专用着色器
+ * - uModel: 部件的世界变换矩阵（平移+旋转）
+ * - uVP:    投影 * 视图矩阵（不含模型变换，单独传入）
+ */
+export const PlayerVertexShader = `
+  attribute vec3 aPosition;
+  attribute vec3 aNormal;
+  attribute vec3 aColor;
+
+  uniform mat4 uModel;  // 部件模型矩阵
+  uniform mat4 uVP;     // View-Projection 矩阵
+
+  varying vec3 vColor;
+  varying vec3 vNormal;
+  varying vec3 vWorldPos;
+
+  void main() {
+    vec4 worldPos = uModel * vec4(aPosition, 1.0);
+    gl_Position = uVP * worldPos;
+    vWorldPos = worldPos.xyz;
+    vColor = aColor;
+    // 法线变换：只需旋转部分（忽略非均匀缩放）
+    vNormal = mat3(uModel) * aNormal;
+  }
+`;
+
+export const PlayerFragmentShader = `
+  precision mediump float;
+
+  varying vec3 vColor;
+  varying vec3 vNormal;
+  varying vec3 vWorldPos;
+
+  uniform vec3 uCameraPos;
+
+  const vec3 lightDir = normalize(vec3(0.5, 0.9, 0.3));
+  const vec3 lightColor = vec3(1.0, 0.96, 0.88);
+  const vec3 ambientColor = vec3(0.35, 0.4, 0.45);
+  const vec3 skyColor = vec3(0.53, 0.81, 0.98);
+
+  void main() {
+    vec3 norm = normalize(vNormal);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * lightColor;
+    vec3 finalColor = (ambientColor + diffuse) * vColor;
+
+    // 距离雾
+    float dist = length(uCameraPos - vWorldPos);
+    float fogFactor = smoothstep(40.0, 80.0, dist);
+    finalColor = mix(finalColor, skyColor, fogFactor);
+
+    gl_FragColor = vec4(finalColor, 1.0);
+  }
+`;
+
 export const WaterFragmentShader = `
   precision mediump float;
   

@@ -375,6 +375,173 @@ class Player {
 
     return null;
   }
+  /**
+   * 获取第三人称模型渲染数据
+   * 返回各部件的 { mesh, modelMatrix } 列表
+   * @returns {Array<{ positions, normals, colors, indices, modelMatrix: Float32Array }>}
+   */
+  getModelParts() {
+    const px = this.position.x;
+    const py = this.position.y - PLAYER_HEIGHT; // 脚底 Y
+    const pz = this.position.z;
+    const yaw = this.yaw;
+
+    // 部件尺寸（与原版比例相近，单位：格）
+    const HEAD_W = 0.5, HEAD_H = 0.5, HEAD_D = 0.5;
+    const BODY_W = 0.5, BODY_H = 0.75, BODY_D = 0.25;
+    const ARM_W = 0.25, ARM_H = 0.75, ARM_D = 0.25;
+    const LEG_W = 0.25, LEG_H = 0.75, LEG_D = 0.25;
+
+    // 腿部摆动动画（根据移动速度）
+    const moving = Math.abs(this.velocity.x) + Math.abs(this.velocity.z) > 0.1;
+    const swing = moving ? Math.sin(performance.now() / 180) * 0.4 : 0;
+
+    const parts = [];
+
+    // 头部：身体顶端 + 半个头高
+    parts.push(_makeBoxPart(
+      HEAD_W, HEAD_H, HEAD_D,
+      [0.88, 0.71, 0.51],   // 肤色
+      px, py + LEG_H + BODY_H + HEAD_H * 0.5, pz,
+      yaw, 0
+    ));
+
+    // 身体
+    parts.push(_makeBoxPart(
+      BODY_W, BODY_H, BODY_D,
+      [0.25, 0.45, 0.75],   // 蓝色衬衫
+      px, py + LEG_H + BODY_H * 0.5, pz,
+      yaw, 0
+    ));
+
+    // 左臂（玩家右侧）：偏左 offset，绕身体顶端摆动
+    const armOffX = (BODY_W * 0.5 + ARM_W * 0.5);
+    parts.push(_makeBoxPart(
+      ARM_W, ARM_H, ARM_D,
+      [0.88, 0.71, 0.51],
+      px + Math.cos(yaw) * armOffX,
+      py + LEG_H + ARM_H * 0.5,
+      pz - Math.sin(yaw) * armOffX,
+      yaw, -swing
+    ));
+
+    // 右臂
+    parts.push(_makeBoxPart(
+      ARM_W, ARM_H, ARM_D,
+      [0.88, 0.71, 0.51],
+      px - Math.cos(yaw) * armOffX,
+      py + LEG_H + ARM_H * 0.5,
+      pz + Math.sin(yaw) * armOffX,
+      yaw, swing
+    ));
+
+    // 左腿
+    const legOffX = LEG_W * 0.5;
+    parts.push(_makeBoxPart(
+      LEG_W, LEG_H, LEG_D,
+      [0.15, 0.22, 0.55],   // 深蓝裤子
+      px + Math.cos(yaw) * legOffX,
+      py + LEG_H * 0.5,
+      pz - Math.sin(yaw) * legOffX,
+      yaw, swing
+    ));
+
+    // 右腿
+    parts.push(_makeBoxPart(
+      LEG_W, LEG_H, LEG_D,
+      [0.15, 0.22, 0.55],
+      px - Math.cos(yaw) * legOffX,
+      py + LEG_H * 0.5,
+      pz + Math.sin(yaw) * legOffX,
+      yaw, -swing
+    ));
+
+    return parts;
+  }
+
+}
+
+/**
+ * 构建一个长方体部件的顶点/索引数据，并计算其模型矩阵
+ * @param {number} w,h,d - 宽高深（以中心为原点的 box）
+ * @param {number[]} color - RGB
+ * @param {number} wx,wy,wz - 世界坐标（部件中心）
+ * @param {number} yaw - 玩家朝向
+ * @param {number} pitchX - 绕 X 轴的摆动角度（手臂/腿动画）
+ */
+function _makeBoxPart(w, h, d, color, wx, wy, wz, yaw, pitchX) {
+  const hw = w / 2, hh = h / 2, hd = d / 2;
+  const [r, g, b] = color;
+
+  // 6个面，每面4顶点
+  // 法线方向：+X, -X, +Y, -Y, +Z, -Z
+  const faceData = [
+    // pos x
+    { n: [1,0,0], v: [[hw,-hh,-hd],[hw,hh,-hd],[hw,hh,hd],[hw,-hh,hd]] },
+    // neg x
+    { n: [-1,0,0], v: [[-hw,-hh,hd],[-hw,hh,hd],[-hw,hh,-hd],[-hw,-hh,-hd]] },
+    // pos y (顶面)
+    { n: [0,1,0], v: [[-hw,hh,-hd],[hw,hh,-hd],[hw,hh,hd],[-hw,hh,hd]] },
+    // neg y (底面)
+    { n: [0,-1,0], v: [[-hw,-hh,hd],[hw,-hh,hd],[hw,-hh,-hd],[-hw,-hh,-hd]] },
+    // pos z
+    { n: [0,0,1], v: [[-hw,-hh,hd],[-hw,hh,hd],[hw,hh,hd],[hw,-hh,hd]] },
+    // neg z
+    { n: [0,0,-1], v: [[hw,-hh,-hd],[hw,hh,-hd],[-hw,hh,-hd],[-hw,-hh,-hd]] },
+  ];
+
+  const positions = [];
+  const normals = [];
+  const colors = [];
+  const indices = [];
+
+  let idx = 0;
+  for (const face of faceData) {
+    // 顶面稍微提亮，底面稍暗，增加层次感
+    const bright = face.n[1] > 0.5 ? 1.15 : (face.n[1] < -0.5 ? 0.75 : 1.0);
+    for (const [vx, vy, vz] of face.v) {
+      positions.push(vx, vy, vz);
+      normals.push(face.n[0], face.n[1], face.n[2]);
+      colors.push(r * bright, g * bright, b * bright);
+    }
+    indices.push(idx, idx+1, idx+2, idx, idx+2, idx+3);
+    idx += 4;
+  }
+
+  // 构建模型矩阵：先绕 X 轴旋转（手臂/腿摆动），再绕 Y 轴旋转（朝向），再平移
+  const modelMatrix = _buildModelMatrix(wx, wy, wz, yaw, pitchX);
+
+  return {
+    positions: new Float32Array(positions),
+    normals: new Float32Array(normals),
+    colors: new Float32Array(colors),
+    indices: new Uint16Array(indices),
+    modelMatrix,
+  };
+}
+
+/**
+ * 构建模型矩阵：绕 X 轴倾斜（摆动），绕 Y 轴旋转（朝向），平移
+ * 列主序 Float32Array，与 WebGL uniformMatrix4fv 对应
+ */
+function _buildModelMatrix(tx, ty, tz, yaw, pitchX) {
+  const cy = Math.cos(yaw),   sy = Math.sin(yaw);
+  const cx = Math.cos(pitchX), sx = Math.sin(pitchX);
+
+  // R = Ry * Rx（先 Rx 再 Ry）
+  // Ry: [ cy, 0, sy; 0,1,0; -sy,0,cy ]
+  // Rx: [ 1,0,0; 0,cx,-sx; 0,sx,cx ]
+  // R = Ry * Rx
+  const m = new Float32Array(16);
+  // 列0
+  m[0]  =  cy;       m[1]  = sy*sx;    m[2]  = -sy*cx;   m[3]  = 0;
+  // 列1
+  m[4]  =  0;        m[5]  = cx;       m[6]  = sx;        m[7]  = 0;
+  // 列2
+  m[8]  =  sy;       m[9]  = -cy*sx;   m[10] = cy*cx;     m[11] = 0;
+  // 列3（平移）
+  m[12] = tx;        m[13] = ty;       m[14] = tz;        m[15] = 1;
+  return m;
 }
 
 export { Player, PLAYER_HEIGHT };
