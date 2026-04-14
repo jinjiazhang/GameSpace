@@ -57,10 +57,30 @@ class Game {
   _spawnPlayer() {
     const x = 8;
     const z = 8;
-    // 先确保出生点附近的区块已加载
     this.world.ensureChunksAround(x, z);
-    const h = this.world.getHeight(x, z);
-    this.player.position.set(x, h + 2 + PLAYER_HEIGHT, z);
+
+    // 螺旋扩展搜索第一个高于水面的陆地坐标
+    let spawnX = x, spawnZ = z;
+    outer:
+    for (let r = 0; r <= 16; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dz = -r; dz <= r; dz++) {
+          if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue; // 只遍历当前环
+          const h = this.world.getHeight(x + dx, z + dz);
+          // getHeight 返回的 h 是固体地表顶面 Y
+          // 当 h > 20（SEA_LEVEL）时地表在水面以上
+          if (h > 20) {
+            spawnX = x + dx;
+            spawnZ = z + dz;
+            break outer;
+          }
+        }
+      }
+    }
+
+    const groundY = this.world.getHeight(spawnX, spawnZ);
+    // 玩家脚底落在地表上方 1 格，再加上玩家身高偏移
+    this.player.position.set(spawnX + 0.5, groundY + 1 + PLAYER_HEIGHT, spawnZ + 0.5);
   }
 
   /** 启动游戏主循环 */

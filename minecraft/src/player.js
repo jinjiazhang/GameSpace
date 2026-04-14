@@ -207,8 +207,8 @@ class Player {
 
   /** 鼠标移动处理 */
   onMouseMove(dx, dy) {
-    this.yaw += dx * MOUSE_SENSITIVITY;
-    this.pitch -= dy * MOUSE_SENSITIVITY;
+    this.yaw   -= dx * MOUSE_SENSITIVITY;   // 向右移动 → 视角右转（yaw 减小）
+    this.pitch -= dy * MOUSE_SENSITIVITY;   // 向上移动 → 视角上抬（pitch 减小）
     this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch));
   }
 

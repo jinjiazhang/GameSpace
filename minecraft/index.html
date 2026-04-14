@@ -170,30 +170,20 @@
     点击屏幕锁定鼠标 | <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 | <kbd>空格</kbd> 跳跃 | <kbd>ESC</kbd> 释放鼠标
   </div>
 
-  <script type="module">
-    import './src/main.js';
-
-    // 隐藏加载画面（等游戏通知就绪后再隐藏）
+  <!-- 加载画面控制：必须在模块脚本之前定义，确保游戏启动时可调用 -->
+  <script>
     window._hideLoading = function() {
       const loading = document.getElementById('loading');
-      if (loading) {
-        loading.style.opacity = '0';
-        setTimeout(() => loading.remove(), 500);
-      }
+      if (!loading) return;
+      loading.style.opacity = '0';
+      setTimeout(() => { if (loading.parentNode) loading.remove(); }, 500);
     };
+    // 兜底超时：10 秒后强制隐藏（防止 JS 报错导致永远卡住）
+    setTimeout(window._hideLoading, 10000);
+  </script>
 
-    // 兜底超时：8 秒后无论如何都隐藏加载画面
-    // 防止因 JS 报错导致永远卡在"世界生成中"
-    setTimeout(() => {
-      const loading = document.getElementById('loading');
-      if (loading) {
-        console.warn('Loading screen: 超时自动关闭（可能存在初始化错误）');
-        loading.style.opacity = '0';
-        setTimeout(() => {
-          if (loading.parentNode) loading.remove();
-        }, 500);
-      }
-    }, 8000);
+  <script type="module">
+    import './src/main.js';
   </script>
 </body>
 </html>
