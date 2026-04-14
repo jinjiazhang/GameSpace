@@ -101,15 +101,10 @@ class Chunk {
             if (neighborId !== 0 && neighborType && !neighborType.transparent) continue;
 
             const vertCount = positions.length / 3;
-            // 顶面/底面颜色略作变化，模拟简单光照
-            const isTop = f === 0;
-            const isBottom = f === 1;
-            let cr = blockType.color[0];
-            let cg = blockType.color[1];
-            let cb = blockType.color[2];
-            if (isTop) { cr *= 1.15; cg *= 1.15; cb *= 1.15; }
-            else if (isBottom) { cr *= 0.5; cg *= 0.5; cb *= 0.5; }
-            else { cr *= 0.75; cg *= 0.75; cb *= 0.75; }
+            // 颜色由片段着色器计算光照，这里只需传原生底色
+            const cr = blockType.color[0];
+            const cg = blockType.color[1];
+            const cb = blockType.color[2];
 
             for (const corner of face.corners) {
               positions.push(ox + x + corner[0], y + corner[1], oz + z + corner[2]);

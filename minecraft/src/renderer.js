@@ -11,24 +11,52 @@ const VS_SOURCE = `
   attribute vec3 aNormal;
   attribute vec3 aColor;
   uniform mat4 uMVP;
+  
   varying vec3 vColor;
-  varying float vLight;
+  varying vec3 vNormal;
+  varying vec3 vWorldPos;
+  
   void main() {
     gl_Position = uMVP * vec4(aPosition, 1.0);
-    // 简单定向光照
-    vec3 lightDir = normalize(vec3(0.3, 1.0, 0.2));
-    vLight = max(dot(aNormal, lightDir), 0.3);
     vColor = aColor;
+    vNormal = aNormal;
+    vWorldPos = aPosition;
   }
 `;
 
 /** 片段着色器 */
 const FS_SOURCE = `
   precision mediump float;
+  
   varying vec3 vColor;
-  varying float vLight;
+  varying vec3 vNormal;
+  varying vec3 vWorldPos;
+  
+  uniform vec3 uCameraPos;
+  
+  // 光照常量设置
+  const vec3 lightDir = normalize(vec3(0.5, 0.9, 0.3)); // 太阳光方向
+  const vec3 lightColor = vec3(1.0, 0.96, 0.88);        // 阳光颜色（偏暖）
+  const vec3 ambientColor = vec3(0.4, 0.45, 0.5);       // 环境光（偏蓝/灰，模拟天光）
+  const vec3 skyColor = vec3(0.53, 0.81, 0.98);         // 天空颜色，用于雾气混合
+
   void main() {
-    gl_FragColor = vec4(vColor * vLight, 1.0);
+    // 1. 漫反射光照 (Lambert)
+    vec3 norm = normalize(vNormal);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * lightColor;
+
+    // 合并光照与方块底色
+    vec3 finalColor = (ambientColor + diffuse) * vColor;
+
+    // 2. 距离雾 (Fog)
+    float dist = length(uCameraPos - vWorldPos);
+    // 雾气范围：40格开始起雾，80格完全融入天空背景
+    float fogFactor = smoothstep(40.0, 80.0, dist);
+    
+    finalColor = mix(finalColor, skyColor, fogFactor);
+
+    gl_FragColor = vec4(finalColor, 1.0);
   }
 `;
 
@@ -60,6 +88,7 @@ class Renderer {
     this.aNormal = gl.getAttribLocation(this.program, 'aNormal');
     this.aColor = gl.getAttribLocation(this.program, 'aColor');
     this.uMVP = gl.getUniformLocation(this.program, 'uMVP');
+    this.uCameraPos = gl.getUniformLocation(this.program, 'uCameraPos');
 
     // GL 状态
     gl.enable(gl.DEPTH_TEST);
@@ -159,8 +188,9 @@ class Renderer {
    * 渲染一帧
    * @param {Mat4} viewMatrix - 视图矩阵
    * @param {Mat4} projMatrix - 投影矩阵
+   * @param {Vec3} cameraPos - 相机世界坐标（计算雾气需要）
    */
-  render(viewMatrix, projMatrix) {
+  render(viewMatrix, projMatrix, cameraPos) {
     const gl = this.gl;
     gl.viewport(0, 0, this.width, this.height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -169,6 +199,10 @@ class Renderer {
 
     const mvp = projMatrix.multiply(viewMatrix);
     gl.uniformMatrix4fv(this.uMVP, false, mvp.m);
+
+    if (cameraPos) {
+      gl.uniform3f(this.uCameraPos, cameraPos.x, cameraPos.y, cameraPos.z);
+    }
 
     // 遍历所有区块缓冲区进行绘制
     for (const buf of this.chunkBuffers.values()) {

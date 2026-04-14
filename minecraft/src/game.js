@@ -189,7 +189,9 @@ class Game {
     const viewMatrix = this.player.getViewMatrix();
     const aspect = this.width / this.height;
     const projMatrix = Mat4.perspective(this.fov, aspect, this.near, this.far);
-    this.renderer.render(viewMatrix, projMatrix);
+    
+    // 传入玩家位置给渲染器，用于雾气计算
+    this.renderer.render(viewMatrix, projMatrix, this.player.position);
 
     // 更新 HUD
     this._updateHUD();
