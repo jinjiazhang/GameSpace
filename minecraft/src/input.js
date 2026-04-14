@@ -25,6 +25,11 @@ class Input {
     this._lastTouchY = 0;
     this._touchId = null;
 
+    // 鼠标按键
+    this._mouseButtons = {};
+    this._clickLeft = false;    // 本帧左键按下（破坏方块）
+    this._clickRight = false;   // 本帧右键按下（放置方块）
+
     if (isWx) {
       this._initWxInput();
     } else {
@@ -39,12 +44,20 @@ class Input {
 
     // 键盘
     this._keys = {};
+    this._keyPressed = {};  // 单次触发（用于切换方块）
     document.addEventListener('keydown', (e) => {
       this._keys[e.code] = true;
+      if (!this._keyPressed[e.code]) {
+        this._keyPressed[e.code] = true;
+      }
       // 按 Escape 解锁指针
       if (e.code === 'Escape' && this.pointerLocked) {
         document.exitPointerLock();
       }
+    });
+    document.addEventListener('keyup', (e) => {
+      this._keys[e.code] = false;
+      this._keyPressed[e.code] = false;
     });
     document.addEventListener('keyup', (e) => {
       this._keys[e.code] = false;
@@ -67,6 +80,17 @@ class Input {
         this.mouseDY += e.movementY;
       }
     });
+
+    // 鼠标按键：左键破坏方块，右键放置方块
+    canvas.addEventListener('mousedown', (e) => {
+      if (!this.pointerLocked) return;
+      if (e.button === 0) this._clickLeft = true;
+      if (e.button === 2) this._clickRight = true;
+      e.preventDefault();
+    });
+
+    // 右键菜单禁用
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
   // ---- 微信小游戏触摸输入 ----
@@ -78,6 +102,9 @@ class Input {
     this._joystickTouchId = null;
     this._joystickOriginX = 0;
     this._joystickOriginY = 0;
+    // 跳跃按钮（右半屏上方区域轻触）
+    this._jumpPressed = false;
+    this._jumpTouchId = null;
 
     const wxApi = globalThis.wx;
 
@@ -90,8 +117,12 @@ class Input {
           this._joystickOriginY = touch.clientY;
           this._joystickX = 0;
           this._joystickY = 0;
+        } else if (touch.clientY < this.canvas.height * 0.5 && this._jumpTouchId === null) {
+          // 右半屏上方 - 跳跃按钮
+          this._jumpTouchId = touch.identifier;
+          this._jumpPressed = true;
         } else if (this._touchId === null) {
-          // 右半屏 - 视角控制
+          // 右半屏下方 - 视角控制
           this._touchId = touch.identifier;
           this._lastTouchX = touch.clientX;
           this._lastTouchY = touch.clientY;
@@ -133,6 +164,10 @@ class Input {
         if (touch.identifier === this._touchId) {
           this._touchId = null;
         }
+        if (touch.identifier === this._jumpTouchId) {
+          this._jumpTouchId = null;
+          this._jumpPressed = false;
+        }
       }
     };
 
@@ -156,9 +191,24 @@ class Input {
     player.inputRight = !!(this._keys['KeyD'] || this._keys['ArrowRight']);
     player.inputJump = !!(this._keys['Space']);
 
+    // 方块交互
+    player.clickLeft = this._clickLeft;
+    player.clickRight = this._clickRight;
+
+    // 数字键切换方块（1-5）
+    if (this._keyPressed['Digit1']) player.blockSelectKey = 1;
+    else if (this._keyPressed['Digit2']) player.blockSelectKey = 2;
+    else if (this._keyPressed['Digit3']) player.blockSelectKey = 3;
+    else if (this._keyPressed['Digit4']) player.blockSelectKey = 4;
+    else if (this._keyPressed['Digit5']) player.blockSelectKey = 5;
+
     player.onMouseMove(this.mouseDX, this.mouseDY);
     this.mouseDX = 0;
     this.mouseDY = 0;
+
+    // 消费点击事件（每帧只触发一次）
+    this._clickLeft = false;
+    this._clickRight = false;
   }
 
   _updateWx(player) {
@@ -166,7 +216,7 @@ class Input {
     player.inputBackward = this._joystickY > 0.2;
     player.inputLeft = this._joystickX < -0.2;
     player.inputRight = this._joystickX > 0.2;
-    player.inputJump = this._joystickY < -0.6; // 向上推摇杆触发跳跃
+    player.inputJump = this._jumpPressed; // 右上角区域轻触跳跃
 
     player.onMouseMove(this.mouseDX, this.mouseDY);
     this.mouseDX = 0;

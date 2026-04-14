@@ -107,7 +107,7 @@ class Chunk {
             let cr = blockType.color[0];
             let cg = blockType.color[1];
             let cb = blockType.color[2];
-            if (isTop) { cr *= 1.0; cg *= 1.0; cb *= 1.0; }
+            if (isTop) { cr *= 1.15; cg *= 1.15; cb *= 1.15; }
             else if (isBottom) { cr *= 0.5; cg *= 0.5; cb *= 0.5; }
             else { cr *= 0.75; cg *= 0.75; cb *= 0.75; }
 

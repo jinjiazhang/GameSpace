@@ -8,9 +8,13 @@ import { Blocks } from './blocks.js';
 
 /** 玩家物理常量 */
 const MOVE_SPEED = 6.0;
+const SWIM_SPEED = 4.0;       // 水中移动速度（较慢）
 const MOUSE_SENSITIVITY = 0.002;
 const GRAVITY = -20.0;
 const JUMP_SPEED = 8.0;
+const SWIM_JUMP_SPEED = 6.0;  // 水中跳跃速度（较弱）
+const WATER_BUOYANCY = 8.0;   // 水的浮力加速度
+const WATER_DRAG = 3.0;       // 水中阻力系数
 const PLAYER_HEIGHT = 1.6;
 const PLAYER_RADIUS = 0.3;
 
@@ -31,6 +35,11 @@ class Player {
     this.inputLeft = false;
     this.inputRight = false;
     this.inputJump = false;
+
+    // 方块交互
+    this.clickLeft = false;   // 左键点击（破坏）
+    this.clickRight = false;  // 右键点击（放置）
+    this.blockSelectKey = 0;  // 数字键切换方块（0=无）
   }
 
   /** 前方向（水平） */
@@ -75,21 +84,47 @@ class Player {
     if (this.inputRight)    { moveDir.x += right.x;   moveDir.z += right.z; }
     if (this.inputLeft)     { moveDir.x -= right.x;   moveDir.z -= right.z; }
 
+    // 检测是否在水中
+    const inWater = this._isInWater(world);
+    const speed = inWater ? SWIM_SPEED : MOVE_SPEED;
+
     if (moveDir.length() > 0) {
       const norm = moveDir.normalize();
-      this.velocity.x = norm.x * MOVE_SPEED;
-      this.velocity.z = norm.z * MOVE_SPEED;
+      this.velocity.x = norm.x * speed;
+      this.velocity.z = norm.z * speed;
     } else {
-      this.velocity.x = 0;
-      this.velocity.z = 0;
+      // 水中阻力：速度快速衰减
+      const dragFactor = inWater ? Math.max(0, 1 - WATER_DRAG * dt) : 0;
+      this.velocity.x *= dragFactor;
+      this.velocity.z *= dragFactor;
+      if (!inWater) {
+        this.velocity.x = 0;
+        this.velocity.z = 0;
+      }
     }
 
-    if (this.inputJump && this.onGround) {
-      this.velocity.y = JUMP_SPEED;
-      this.onGround = false;
+    // 跳跃：水中可游泳跳跃，地面可普通跳跃
+    if (this.inputJump) {
+      if (inWater) {
+        // 在水中可以向上游
+        if (this.velocity.y < SWIM_JUMP_SPEED) {
+          this.velocity.y = SWIM_JUMP_SPEED;
+        }
+      } else if (this.onGround) {
+        this.velocity.y = JUMP_SPEED;
+        this.onGround = false;
+      }
     }
 
-    this.velocity.y += GRAVITY * dt;
+    // 重力 / 浮力
+    if (inWater) {
+      // 水中：浮力抵消大部分重力，剩余向下微弱下沉
+      this.velocity.y += (GRAVITY + WATER_BUOYANCY) * dt;
+      // 限制下落速度（水的阻力）
+      this.velocity.y = Math.max(-2.0, Math.min(4.0, this.velocity.y));
+    } else {
+      this.velocity.y += GRAVITY * dt;
+    }
 
     const newPos = this.position.add(this.velocity.scale(dt));
     this._collide(newPos, world);
@@ -98,6 +133,17 @@ class Player {
       this.position.y = 80;
       this.velocity.y = 0;
     }
+  }
+
+  /** 检测玩家身体是否在水中 */
+  _isInWater(world) {
+    const feetY = Math.floor(this.position.y - PLAYER_HEIGHT);
+    const headY = Math.floor(this.position.y);
+    for (let y = feetY; y <= headY; y++) {
+      const blockId = world.getBlock(Math.floor(this.position.x), y, Math.floor(this.position.z));
+      if (blockId === Blocks.WATER) return true;
+    }
+    return false;
   }
 
   /** 简单的 AABB 碰撞检测 */
@@ -164,6 +210,89 @@ class Player {
     this.yaw += dx * MOUSE_SENSITIVITY;
     this.pitch -= dy * MOUSE_SENSITIVITY;
     this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch));
+  }
+
+  /**
+   * 射线检测（DDA 算法）
+   * 从玩家视线方向发射射线，返回命中的方块位置和法线方向
+   * @param {object} world - World 对象
+   * @param {number} maxDist - 最大检测距离
+   * @returns {{ hit: [x,y,z], normal: [nx,ny,nz], blockId: number } | null}
+   */
+  raycast(world, maxDist = 6) {
+    const dir = this.getLookDir();
+    // 从眼睛位置发射
+    const originX = this.position.x;
+    const originY = this.position.y - PLAYER_HEIGHT * 0.4; // 眼睛略低于头顶
+    const originZ = this.position.z;
+
+    let x = Math.floor(originX);
+    let y = Math.floor(originY);
+    let z = Math.floor(originZ);
+
+    const stepX = dir.x > 0 ? 1 : (dir.x < 0 ? -1 : 0);
+    const stepY = dir.y > 0 ? 1 : (dir.y < 0 ? -1 : 0);
+    const stepZ = dir.z > 0 ? 1 : (dir.z < 0 ? -1 : 0);
+
+    const tDeltaX = dir.x !== 0 ? Math.abs(1 / dir.x) : Infinity;
+    const tDeltaY = dir.y !== 0 ? Math.abs(1 / dir.y) : Infinity;
+    const tDeltaZ = dir.z !== 0 ? Math.abs(1 / dir.z) : Infinity;
+
+    let tMaxX = dir.x !== 0
+      ? ((stepX > 0 ? (x + 1) : x) - originX) * (1 / dir.x) * Math.sign(dir.x || 1)
+      : Infinity;
+    let tMaxY = dir.y !== 0
+      ? ((stepY > 0 ? (y + 1) : y) - originY) * (1 / dir.y) * Math.sign(dir.y || 1)
+      : Infinity;
+    let tMaxZ = dir.z !== 0
+      ? ((stepZ > 0 ? (z + 1) : z) - originZ) * (1 / dir.z) * Math.sign(dir.z || 1)
+      : Infinity;
+
+    // 修正初始 tMax 值（使用更简洁的方式）
+    if (dir.x !== 0) {
+      const boundaryX = stepX > 0 ? x + 1 : x;
+      tMaxX = (boundaryX - originX) / dir.x;
+    }
+    if (dir.y !== 0) {
+      const boundaryY = stepY > 0 ? y + 1 : y;
+      tMaxY = (boundaryY - originY) / dir.y;
+    }
+    if (dir.z !== 0) {
+      const boundaryZ = stepZ > 0 ? z + 1 : z;
+      tMaxZ = (boundaryZ - originZ) / dir.z;
+    }
+
+    let prevX = x, prevY = y, prevZ = z;
+    const maxSteps = Math.ceil(maxDist) * 3; // 足够的步数
+
+    for (let i = 0; i < maxSteps; i++) {
+      prevX = x; prevY = y; prevZ = z;
+
+      if (tMaxX < tMaxY && tMaxX < tMaxZ) {
+        if (tMaxX > maxDist) break;
+        x += stepX;
+        tMaxX += tDeltaX;
+      } else if (tMaxY < tMaxZ) {
+        if (tMaxY > maxDist) break;
+        y += stepY;
+        tMaxY += tDeltaY;
+      } else {
+        if (tMaxZ > maxDist) break;
+        z += stepZ;
+        tMaxZ += tDeltaZ;
+      }
+
+      const blockId = world.getBlock(x, y, z);
+      if (!NON_SOLID_IDS.has(blockId)) {
+        return {
+          hit: [x, y, z],
+          normal: [prevX - x, prevY - y, prevZ - z],
+          blockId: blockId,
+        };
+      }
+    }
+
+    return null;
   }
 }
 

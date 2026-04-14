@@ -32,19 +32,10 @@ const FS_SOURCE = `
   }
 `;
 
-/** 天空+雾片段着色器 */
-const FS_SKY_SOURCE = `
-  precision mediump float;
-  uniform vec3 uSkyColor;
-  uniform vec3 uFogColor;
-  uniform float uFogNear;
-  uniform float uFogFar;
-  varying float vFogDepth;
-  void main() {
-    gl_FragColor = vec4(uSkyColor, 1.0);
-  }
-`;
-
+/**
+ * Renderer - WebGL 渲染器
+ * 负责编译着色器、管理缓冲区、绘制区块网格
+ */
 class Renderer {
   /**
    * @param {WebGLRenderingContext} gl

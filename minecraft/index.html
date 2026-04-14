@@ -59,6 +59,55 @@
       width: 24px; height: 2px;
       top: 11px; left: 0;
     }
+    /* HUD 坐标与状态显示 */
+    #hud {
+      position: fixed;
+      top: 12px; left: 12px;
+      background: rgba(0,0,0,0.55);
+      color: #ddd;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      pointer-events: none;
+      z-index: 90;
+      user-select: none;
+    }
+    #hud .label { color: #8ab4f8; }
+    #hud .value { color: #fff; }
+    /* 方块选择条 */
+    #hotbar {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 3px;
+      z-index: 90;
+      pointer-events: none;
+    }
+    .hotbar-slot {
+      width: 44px; height: 44px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #ccc;
+      text-align: center;
+      background: rgba(0,0,0,0.45);
+    }
+    .hotbar-slot.selected {
+      border-color: #fff;
+      box-shadow: 0 0 6px rgba(255,255,255,0.35);
+    }
+    .hotbar-slot .block-color {
+      width: 24px; height: 24px;
+      border-radius: 3px;
+      margin-bottom: 2px;
+    }
     #loading {
       position: fixed;
       top: 0; left: 0; width: 100%; height: 100%;
@@ -101,6 +150,22 @@
   <canvas id="gameCanvas"></canvas>
   <div id="crosshair"></div>
 
+  <!-- HUD 坐标显示 -->
+  <div id="hud" style="display:none">
+    <div><span class="label">XYZ</span> <span class="value" id="hud-pos">0, 64, 0</span></div>
+    <div><span class="label">FPS</span> <span class="value" id="hud-fps">60</span></div>
+    <div><span class="label">Chunk</span> <span class="value" id="hud-chunk">0, 0</span></div>
+  </div>
+
+  <!-- 方块选择快捷栏 -->
+  <div id="hotbar">
+    <div class="hotbar-slot selected" data-idx="0"><div class="block-color" style="background:rgb(92,174,62)"></div>1</div>
+    <div class="hotbar-slot" data-idx="1"><div class="block-color" style="background:rgb(141,94,61)"></div>2</div>
+    <div class="hotbar-slot" data-idx="2"><div class="block-color" style="background:rgb(128,128,128)"></div>3</div>
+    <div class="hotbar-slot" data-idx="3"><div class="block-color" style="background:rgb(140,89,41)"></div>4</div>
+    <div class="hotbar-slot" data-idx="4"><div class="block-color" style="background:rgb(51,140,38)"></div>5</div>
+  </div>
+
   <div id="hint" style="display:none">
     点击屏幕锁定鼠标 | <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 | <kbd>空格</kbd> 跳跃 | <kbd>ESC</kbd> 释放鼠标
   </div>
@@ -108,16 +173,27 @@
   <script type="module">
     import './src/main.js';
 
-    // 隐藏加载画面
-    window.addEventListener('load', () => {
-      setTimeout(() => {
-        const loading = document.getElementById('loading');
-        if (loading) {
-          loading.style.opacity = '0';
-          setTimeout(() => loading.remove(), 500);
-        }
-      }, 800);
-    });
+    // 隐藏加载画面（等游戏通知就绪后再隐藏）
+    window._hideLoading = function() {
+      const loading = document.getElementById('loading');
+      if (loading) {
+        loading.style.opacity = '0';
+        setTimeout(() => loading.remove(), 500);
+      }
+    };
+
+    // 兜底超时：8 秒后无论如何都隐藏加载画面
+    // 防止因 JS 报错导致永远卡在"世界生成中"
+    setTimeout(() => {
+      const loading = document.getElementById('loading');
+      if (loading) {
+        console.warn('Loading screen: 超时自动关闭（可能存在初始化错误）');
+        loading.style.opacity = '0';
+        setTimeout(() => {
+          if (loading.parentNode) loading.remove();
+        }, 500);
+      }
+    }, 8000);
   </script>
 </body>
 </html>
