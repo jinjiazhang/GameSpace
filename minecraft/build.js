@@ -26,7 +26,8 @@ function parseModule(filePath) {
   const importRegex = /import\s+(?:\{[^}]*\}|\*\s+as\s+\w+)\s+from\s+['"]\.\/([^'"]+)['"]/g;
   let match;
   while ((match = importRegex.exec(code)) !== null) {
-    const depPath = path.resolve(path.dirname(filePath), match[1] + '.js');
+    const depMod = match[1].endsWith('.js') ? match[1] : match[1] + '.js';
+    const depPath = path.resolve(path.dirname(filePath), depMod);
     deps.push(depPath);
   }
 
@@ -53,7 +54,8 @@ function transformModule(filePath) {
 
   // 替换 import { ... } from './xxx' 为 const { ... } = require()
   code = code.replace(/import\s*\{([^}]*)\}\s*from\s*['"]\.\/([^'"]+)['"]/g, (match, imports, modPath) => {
-    const depPath = path.resolve(path.dirname(filePath), modPath + '.js');
+    const depMod = modPath.endsWith('.js') ? modPath : modPath + '.js';
+    const depPath = path.resolve(path.dirname(filePath), depMod);
     const depId = moduleMap.get(depPath).id;
     const items = imports.split(',').map(s => s.trim()).filter(Boolean);
     return `const { ${items.join(', ')} } = __modules[${depId}]`;
