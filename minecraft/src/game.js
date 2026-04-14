@@ -121,6 +121,12 @@ class Game {
     // 输入
     this.input.update(this.player);
 
+    // F 键切换视角
+    if (this.player.inputToggleCamera) {
+      this.player.toggleCameraMode();
+      this.player.inputToggleCamera = false;
+    }
+
     // 玩家物理
     this.player.update(dt, this.world);
 
@@ -186,12 +192,13 @@ class Game {
 
   /** 渲染 */
   _render() {
-    const viewMatrix = this.player.getViewMatrix();
+    // getCameraInfo 根据视角模式返回正确的眼睛位置和视图矩阵
+    const { eye, viewMatrix } = this.player.getCameraInfo(this.world);
     const aspect = this.width / this.height;
     const projMatrix = Mat4.perspective(this.fov, aspect, this.near, this.far);
     
-    // 传入玩家位置给渲染器，用于雾气计算
-    this.renderer.render(viewMatrix, projMatrix, this.player.position);
+    // 传入相机眼睛位置给渲染器，用于雾气计算
+    this.renderer.render(viewMatrix, projMatrix, eye);
 
     // 更新 HUD
     this._updateHUD();
@@ -228,6 +235,12 @@ class Game {
     const cx = Math.floor(p.x / CHUNK_WIDTH);
     const cz = Math.floor(p.z / CHUNK_DEPTH);
     document.getElementById('hud-chunk').textContent = `${cx}, ${cz}`;
+
+    // 视角模式
+    const camEl = document.getElementById('hud-cam');
+    if (camEl) {
+      camEl.textContent = this.player.isThirdPerson() ? '第三人称' : '第一人称';
+    }
 
     // 更新快捷栏选中状态
     const slots = document.querySelectorAll('.hotbar-slot');

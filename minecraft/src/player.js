@@ -18,6 +18,12 @@ const WATER_DRAG = 3.0;       // 水中阻力系数
 const PLAYER_HEIGHT = 1.6;
 const PLAYER_RADIUS = 0.3;
 
+/** 第三人称相机参数 */
+const THIRD_PERSON_DIST = 5.0;   // 相机距玩家的理想距离
+const THIRD_PERSON_UP = 1.0;     // 相机额外向上偏移量
+const CAMERA_MODE_FIRST  = 'first';
+const CAMERA_MODE_THIRD  = 'third';
+
 /** 不可碰撞的方块集合（空气+水） */
 const NON_SOLID_IDS = new Set([0, Blocks.WATER]);
 
@@ -29,12 +35,16 @@ class Player {
     this.pitch = 0;
     this.onGround = false;
 
+    // 视角模式
+    this.cameraMode = CAMERA_MODE_FIRST; // 'first' | 'third'
+
     // 输入状态
     this.inputForward = false;
     this.inputBackward = false;
     this.inputLeft = false;
     this.inputRight = false;
     this.inputJump = false;
+    this.inputToggleCamera = false; // F 键切换视角
 
     // 方块交互
     this.clickLeft = false;   // 左键点击（破坏）
@@ -61,12 +71,83 @@ class Player {
     ).normalize();
   }
 
-  /** 获取相机视图矩阵 */
-  getViewMatrix() {
-    const eye = this.position;
+  /** 切换视角模式 */
+  toggleCameraMode() {
+    this.cameraMode = this.cameraMode === CAMERA_MODE_FIRST
+      ? CAMERA_MODE_THIRD
+      : CAMERA_MODE_FIRST;
+  }
+
+  /** 是否第三人称 */
+  isThirdPerson() {
+    return this.cameraMode === CAMERA_MODE_THIRD;
+  }
+
+  /**
+   * 获取相机信息
+   * @param {object} world - 用于弹簧臂碰墙检测
+   * @returns {{ eye: Vec3, viewMatrix: Mat4 }}
+   */
+  getCameraInfo(world) {
+    // 玩家头部眼睛位置（第一人称基点）
+    const eyePos = new Vec3(
+      this.position.x,
+      this.position.y - PLAYER_HEIGHT * 0.1, // 略低于头顶
+      this.position.z
+    );
+
+    if (this.cameraMode === CAMERA_MODE_FIRST) {
+      const dir = this.getLookDir();
+      const center = eyePos.add(dir);
+      return {
+        eye: eyePos,
+        viewMatrix: Mat4.lookAt(eyePos, center, new Vec3(0, 1, 0)),
+      };
+    }
+
+    // ---- 第三人称：弹簧臂 ----
     const dir = this.getLookDir();
-    const center = eye.add(dir);
-    return Mat4.lookAt(eye, center, new Vec3(0, 1, 0));
+    // 反方向 + 上方偏移
+    const backDir = new Vec3(-dir.x, -dir.y, -dir.z);
+    const idealEye = new Vec3(
+      eyePos.x + backDir.x * THIRD_PERSON_DIST,
+      eyePos.y + backDir.y * THIRD_PERSON_DIST + THIRD_PERSON_UP,
+      eyePos.z + backDir.z * THIRD_PERSON_DIST
+    );
+
+    // 弹簧臂碰墙：从头部向相机方向逐步检测
+    let actualDist = THIRD_PERSON_DIST;
+    if (world) {
+      const stepCount = Math.ceil(THIRD_PERSON_DIST * 2);
+      for (let i = 1; i <= stepCount; i++) {
+        const t = (i / stepCount) * THIRD_PERSON_DIST;
+        const testX = eyePos.x + backDir.x * t;
+        const testY = eyePos.y + backDir.y * t + THIRD_PERSON_UP * (t / THIRD_PERSON_DIST);
+        const testZ = eyePos.z + backDir.z * t;
+        const blockId = world.getBlock(Math.floor(testX), Math.floor(testY), Math.floor(testZ));
+        // 撞到固体（非空气、非水）时缩短距离
+        if (blockId !== 0 && blockId !== Blocks.WATER) {
+          actualDist = Math.max(0.5, t - 0.3);
+          break;
+        }
+      }
+    }
+
+    const camEye = new Vec3(
+      eyePos.x + backDir.x * actualDist,
+      eyePos.y + backDir.y * actualDist + THIRD_PERSON_UP,
+      eyePos.z + backDir.z * actualDist
+    );
+    // 看向玩家头部
+    return {
+      eye: camEye,
+      viewMatrix: Mat4.lookAt(camEye, eyePos, new Vec3(0, 1, 0)),
+    };
+  }
+
+  /** 获取相机视图矩阵（向后兼容，第一人称） */
+  getViewMatrix() {
+    return this.getCameraInfo(null).viewMatrix;
   }
 
   /**

@@ -202,6 +202,10 @@ class Input {
     else if (this._keyPressed['Digit4']) player.blockSelectKey = 4;
     else if (this._keyPressed['Digit5']) player.blockSelectKey = 5;
 
+    // F 键切换第一/第三人称视角（单次触发）
+    player.inputToggleCamera = !!(this._keyPressed['KeyF']);
+    if (this._keyPressed['KeyF']) this._keyPressed['KeyF'] = false; // 消费掉，下帧不重复
+
     player.onMouseMove(this.mouseDX, this.mouseDY);
     this.mouseDX = 0;
     this.mouseDY = 0;
