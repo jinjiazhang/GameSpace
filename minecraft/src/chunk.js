@@ -59,13 +59,11 @@ class Chunk {
   /**
    * 构建渲染网格
    * @param {Function} getWorldBlock - (wx, wy, wz) => blockId 获取世界方块
-   * @returns {{ positions: Float32Array, normals: Float32Array, colors: Float32Array, indices: Uint32Array }}
+   * @returns {{ solidMesh: object, waterMesh: object }}
    */
   buildMesh(getWorldBlock) {
-    const positions = [];
-    const normals = [];
-    const colors = [];
-    const indices = [];
+    const solidPos = [], solidNorm = [], solidCol = [], solidIdx = [];
+    const waterPos = [], waterNorm = [], waterCol = [], waterIdx = [];
 
     const ox = this.cx * CHUNK_WIDTH;
     const oz = this.cz * CHUNK_DEPTH;
@@ -78,6 +76,12 @@ class Chunk {
 
           const blockType = Blocks.get(blockId);
           if (!blockType) continue;
+
+          const isWater = blockId === Blocks.WATER;
+          const positions = isWater ? waterPos : solidPos;
+          const normals = isWater ? waterNorm : solidNorm;
+          const colors = isWater ? waterCol : solidCol;
+          const indices = isWater ? waterIdx : solidIdx;
 
           for (let f = 0; f < 6; f++) {
             const face = FACE_DEFS[f];
@@ -97,11 +101,18 @@ class Chunk {
             }
 
             // 相邻方块为空气或透明时才绘制此面
+            // 但是如果是水面，相邻的也是水面，则不绘制内部面
             const neighborType = Blocks.get(neighborId);
-            if (neighborId !== 0 && neighborType && !neighborType.transparent) continue;
+            if (neighborId !== 0 && neighborType) {
+              if (isWater && neighborId === Blocks.WATER) {
+                // 水与水相邻，不绘制面
+                continue;
+              } else if (!neighborType.transparent) {
+                continue;
+              }
+            }
 
             const vertCount = positions.length / 3;
-            // 颜色由片段着色器计算光照，这里只需传原生底色
             const cr = blockType.color[0];
             const cg = blockType.color[1];
             const cb = blockType.color[2];
@@ -112,7 +123,6 @@ class Chunk {
               colors.push(cr, cg, cb);
             }
 
-            // 两个三角形
             indices.push(
               vertCount, vertCount + 1, vertCount + 2,
               vertCount, vertCount + 2, vertCount + 3
@@ -123,10 +133,18 @@ class Chunk {
     }
 
     this.mesh = {
-      positions: new Float32Array(positions),
-      normals: new Float32Array(normals),
-      colors: new Float32Array(colors),
-      indices: new Uint32Array(indices),
+      solidMesh: {
+        positions: new Float32Array(solidPos),
+        normals: new Float32Array(solidNorm),
+        colors: new Float32Array(solidCol),
+        indices: new Uint32Array(solidIdx),
+      },
+      waterMesh: {
+        positions: new Float32Array(waterPos),
+        normals: new Float32Array(waterNorm),
+        colors: new Float32Array(waterCol),
+        indices: new Uint32Array(waterIdx),
+      }
     };
     this.dirty = false;
     return this.mesh;

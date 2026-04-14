@@ -4,61 +4,7 @@
  */
 
 import { Mat4 } from './math.js';
-
-/** 顶点着色器 */
-const VS_SOURCE = `
-  attribute vec3 aPosition;
-  attribute vec3 aNormal;
-  attribute vec3 aColor;
-  uniform mat4 uMVP;
-  
-  varying vec3 vColor;
-  varying vec3 vNormal;
-  varying vec3 vWorldPos;
-  
-  void main() {
-    gl_Position = uMVP * vec4(aPosition, 1.0);
-    vColor = aColor;
-    vNormal = aNormal;
-    vWorldPos = aPosition;
-  }
-`;
-
-/** 片段着色器 */
-const FS_SOURCE = `
-  precision mediump float;
-  
-  varying vec3 vColor;
-  varying vec3 vNormal;
-  varying vec3 vWorldPos;
-  
-  uniform vec3 uCameraPos;
-  
-  // 光照常量设置
-  const vec3 lightDir = normalize(vec3(0.5, 0.9, 0.3)); // 太阳光方向
-  const vec3 lightColor = vec3(1.0, 0.96, 0.88);        // 阳光颜色（偏暖）
-  const vec3 ambientColor = vec3(0.4, 0.45, 0.5);       // 环境光（偏蓝/灰，模拟天光）
-  const vec3 skyColor = vec3(0.53, 0.81, 0.98);         // 天空颜色，用于雾气混合
-
-  void main() {
-    // 1. 漫反射光照 (Lambert)
-    vec3 norm = normalize(vNormal);
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * lightColor;
-
-    // 合并光照与方块底色
-    vec3 finalColor = (ambientColor + diffuse) * vColor;
-
-    // 2. 距离雾 (Fog)
-    float dist = length(uCameraPos - vWorldPos);
-    // 雾气范围：40格开始起雾，80格完全融入天空背景
-    float fogFactor = smoothstep(40.0, 80.0, dist);
-    
-    finalColor = mix(finalColor, skyColor, fogFactor);
-
-    gl_FragColor = vec4(finalColor, 1.0);
-  }
-`;
+import { BasicVertexShader, SolidFragmentShader, WaterFragmentShader } from './shaders.js';
 
 /**
  * Renderer - WebGL 渲染器
@@ -81,19 +27,37 @@ class Renderer {
   _initGL() {
     const gl = this.gl;
     // 编译着色器程序
-    this.program = this._createProgram(VS_SOURCE, FS_SOURCE);
+    this.solidProgram = this._createProgram(BasicVertexShader, SolidFragmentShader);
+    this.waterProgram = this._createProgram(BasicVertexShader, WaterFragmentShader);
 
-    // 获取 attribute / uniform 位置
-    this.aPosition = gl.getAttribLocation(this.program, 'aPosition');
-    this.aNormal = gl.getAttribLocation(this.program, 'aNormal');
-    this.aColor = gl.getAttribLocation(this.program, 'aColor');
-    this.uMVP = gl.getUniformLocation(this.program, 'uMVP');
-    this.uCameraPos = gl.getUniformLocation(this.program, 'uCameraPos');
+    // 获取 attribute / uniform 位置 (固体)
+    this.solidLocations = {
+      aPosition: gl.getAttribLocation(this.solidProgram, 'aPosition'),
+      aNormal: gl.getAttribLocation(this.solidProgram, 'aNormal'),
+      aColor: gl.getAttribLocation(this.solidProgram, 'aColor'),
+      uMVP: gl.getUniformLocation(this.solidProgram, 'uMVP'),
+      uCameraPos: gl.getUniformLocation(this.solidProgram, 'uCameraPos'),
+    };
+
+    // 获取 attribute / uniform 位置 (水面)
+    this.waterLocations = {
+      aPosition: gl.getAttribLocation(this.waterProgram, 'aPosition'),
+      aNormal: gl.getAttribLocation(this.waterProgram, 'aNormal'),
+      aColor: gl.getAttribLocation(this.waterProgram, 'aColor'),
+      uMVP: gl.getUniformLocation(this.waterProgram, 'uMVP'),
+      uCameraPos: gl.getUniformLocation(this.waterProgram, 'uCameraPos'),
+      uTime: gl.getUniformLocation(this.waterProgram, 'uTime'),
+    };
 
     // GL 状态
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
+
+    // 启用混合 (用于水面半透明)
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
     // 天空颜色
     gl.clearColor(0.53, 0.81, 0.98, 1.0);
   }
@@ -130,23 +94,10 @@ class Renderer {
 
   // ---- 缓冲区管理 ----
 
-  /**
-   * 上传 Chunk 网格数据到 GPU
-   * @param {string} key - "cx,cz"
-   * @param {object} mesh - Chunk.buildMesh() 的返回值
-   */
-  uploadChunkMesh(key, mesh) {
+  _createBufferSet(mesh) {
+    if (!mesh || mesh.indices.length === 0) return null;
     const gl = this.gl;
-
-    // 如果已有旧缓冲区，先删除
-    if (this.chunkBuffers.has(key)) {
-      const old = this.chunkBuffers.get(key);
-      gl.deleteBuffer(old.posBuf);
-      gl.deleteBuffer(old.normBuf);
-      gl.deleteBuffer(old.colBuf);
-      gl.deleteBuffer(old.idxBuf);
-    }
-
+    
     const posBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
     gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
@@ -163,26 +114,68 @@ class Renderer {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
 
+    return { posBuf, normBuf, colBuf, idxBuf, indexCount: mesh.indices.length };
+  }
+
+  _deleteBufferSet(buf) {
+    if (!buf) return;
+    const gl = this.gl;
+    gl.deleteBuffer(buf.posBuf);
+    gl.deleteBuffer(buf.normBuf);
+    gl.deleteBuffer(buf.colBuf);
+    gl.deleteBuffer(buf.idxBuf);
+  }
+
+  /**
+   * 上传 Chunk 网格数据到 GPU
+   * @param {string} key - "cx,cz"
+   * @param {object} meshGroup - Chunk.buildMesh() 的返回值 (包含 solidMesh, waterMesh)
+   */
+  uploadChunkMesh(key, meshGroup) {
+    // 如果已有旧缓冲区，先删除
+    this.removeChunkMesh(key);
+
     this.chunkBuffers.set(key, {
-      posBuf, normBuf, colBuf, idxBuf,
-      indexCount: mesh.indices.length,
+      solid: this._createBufferSet(meshGroup.solidMesh),
+      water: this._createBufferSet(meshGroup.waterMesh),
     });
   }
 
   /** 删除指定区块的 GPU 缓冲区 */
   removeChunkMesh(key) {
     if (this.chunkBuffers.has(key)) {
-      const buf = this.chunkBuffers.get(key);
-      const gl = this.gl;
-      gl.deleteBuffer(buf.posBuf);
-      gl.deleteBuffer(buf.normBuf);
-      gl.deleteBuffer(buf.colBuf);
-      gl.deleteBuffer(buf.idxBuf);
+      const bufs = this.chunkBuffers.get(key);
+      this._deleteBufferSet(bufs.solid);
+      this._deleteBufferSet(bufs.water);
       this.chunkBuffers.delete(key);
     }
   }
 
   // ---- 渲染 ----
+
+  _drawBufferSet(buf, locs) {
+    if (!buf) return;
+    const gl = this.gl;
+
+    // Position
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf.posBuf);
+    gl.enableVertexAttribArray(locs.aPosition);
+    gl.vertexAttribPointer(locs.aPosition, 3, gl.FLOAT, false, 0, 0);
+
+    // Normal
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf.normBuf);
+    gl.enableVertexAttribArray(locs.aNormal);
+    gl.vertexAttribPointer(locs.aNormal, 3, gl.FLOAT, false, 0, 0);
+
+    // Color
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf.colBuf);
+    gl.enableVertexAttribArray(locs.aColor);
+    gl.vertexAttribPointer(locs.aColor, 3, gl.FLOAT, false, 0, 0);
+
+    // Draw
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.idxBuf);
+    gl.drawElements(gl.TRIANGLES, buf.indexCount, gl.UNSIGNED_INT, 0);
+  }
 
   /**
    * 渲染一帧
@@ -195,35 +188,29 @@ class Renderer {
     gl.viewport(0, 0, this.width, this.height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    gl.useProgram(this.program);
-
     const mvp = projMatrix.multiply(viewMatrix);
-    gl.uniformMatrix4fv(this.uMVP, false, mvp.m);
 
+    // 1. 渲染所有固体方块 (不透明)
+    gl.useProgram(this.solidProgram);
+    gl.uniformMatrix4fv(this.solidLocations.uMVP, false, mvp.m);
     if (cameraPos) {
-      gl.uniform3f(this.uCameraPos, cameraPos.x, cameraPos.y, cameraPos.z);
+      gl.uniform3f(this.solidLocations.uCameraPos, cameraPos.x, cameraPos.y, cameraPos.z);
+    }
+    for (const bufs of this.chunkBuffers.values()) {
+      this._drawBufferSet(bufs.solid, this.solidLocations);
     }
 
-    // 遍历所有区块缓冲区进行绘制
-    for (const buf of this.chunkBuffers.values()) {
-      // Position
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf.posBuf);
-      gl.enableVertexAttribArray(this.aPosition);
-      gl.vertexAttribPointer(this.aPosition, 3, gl.FLOAT, false, 0, 0);
-
-      // Normal
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf.normBuf);
-      gl.enableVertexAttribArray(this.aNormal);
-      gl.vertexAttribPointer(this.aNormal, 3, gl.FLOAT, false, 0, 0);
-
-      // Color
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf.colBuf);
-      gl.enableVertexAttribArray(this.aColor);
-      gl.vertexAttribPointer(this.aColor, 3, gl.FLOAT, false, 0, 0);
-
-      // Draw
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.idxBuf);
-      gl.drawElements(gl.TRIANGLES, buf.indexCount, gl.UNSIGNED_INT, 0);
+    // 2. 渲染所有水面方块 (半透明)
+    // 理想情况下应该根据深度排序，但为了简化，直接在固体之后渲染
+    gl.useProgram(this.waterProgram);
+    gl.uniformMatrix4fv(this.waterLocations.uMVP, false, mvp.m);
+    if (cameraPos) {
+      gl.uniform3f(this.waterLocations.uCameraPos, cameraPos.x, cameraPos.y, cameraPos.z);
+    }
+    gl.uniform1f(this.waterLocations.uTime, performance.now() / 1000.0);
+    
+    for (const bufs of this.chunkBuffers.values()) {
+      this._drawBufferSet(bufs.water, this.waterLocations);
     }
   }
 
