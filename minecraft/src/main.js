@@ -50,12 +50,11 @@ function initBrowser() {
     console.warn('OES_element_index_uint 不可用，大区块可能无法渲染');
   }
 
-  // 统一 HUD：外部创建离屏 canvas，直接传入；dpr 用于坐标系换算
-  const dpr = window.devicePixelRatio || 1;
+  // 浏览器端主画布本身就使用逻辑像素，HUD 也按同一坐标系绘制即可
   const hudCanvas = globalThis.document.createElement('canvas');
   hudCanvas.width  = canvas.width;
   hudCanvas.height = canvas.height;
-  const hud = new HUD(hudCanvas, dpr);
+  const hud = new HUD(hudCanvas, 1);
 
   // 创建并启动游戏
   const game = new Game({

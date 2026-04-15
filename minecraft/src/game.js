@@ -18,16 +18,17 @@ class Game {
    * @param {object} options
    * @param {HTMLCanvasElement|object} options.canvas - 画布
    * @param {WebGLRenderingContext} options.gl - WebGL 上下文
-   * @param {boolean} options.isWx - 是否微信小游戏
-   * @param {object|null} options.hud - HUD 实例（仅浏览器端传入，微信端为 null）
-   * @param {number} options.width - 画布宽
-   * @param {number} options.height - 画布高
-   */
-  constructor({ canvas, gl, isWx = false, hud = null, width = 800, height = 600 }) {
+ * @param {boolean} options.isWx - 是否微信小游戏
+ * @param {object} options.hud - HUD 实例
+ * @param {number} options.width - 画布宽
+ * @param {number} options.height - 画布高
+ */
+  constructor({ canvas, gl, isWx = false, hud, width = 800, height = 600 }) {
     this.canvas = canvas;
     this.gl = gl;
     this.isWx = isWx;
-    this.hud = hud;       // 浏览器端的 UI 管理器，微信端为 null
+    this.hud = hud;
+
     this.width = width;
     this.height = height;
     this.running = false;
@@ -123,10 +124,19 @@ class Game {
     // 输入
     this.input.update(this.player);
 
-    // F 键切换视角（单帧消费，player.update 末尾会清零）
+    // 单帧输入必须在 player.update 之前消费，因为 player.update 末尾会统一清零
     if (this.player.inputToggleCamera) {
       this.player.toggleCameraMode();
     }
+
+    if (this.player.blockSelectKey > 0) {
+      this._blockTypeIndex = this.player.blockSelectKey - 1;
+      if (this._blockTypeIndex < this._blockTypes.length) {
+        this.selectedBlock = this._blockTypes[this._blockTypeIndex];
+      }
+    }
+
+    this._handleBlockInteraction();
 
     // 玩家物理
     this.player.update(dt, this.world);
@@ -134,16 +144,6 @@ class Game {
     // 确保玩家周围的区块已加载
     this.world.ensureChunksAround(this.player.position.x, this.player.position.z);
 
-    // 方块交互：破坏/放置
-    this._handleBlockInteraction();
-
-    // 数字键切换方块类型（单帧消费，player.update 末尾会清零）
-    if (this.player.blockSelectKey > 0) {
-      this._blockTypeIndex = this.player.blockSelectKey - 1;
-      if (this._blockTypeIndex < this._blockTypes.length) {
-        this.selectedBlock = this._blockTypes[this._blockTypeIndex];
-      }
-    }
 
     // 重建脏区块的网格
     const dirtyChunks = this.world.getDirtyChunks();
@@ -212,15 +212,14 @@ class Game {
     // 更新 HUD 数据并绘制到离屏 Canvas
     this._updateHUD();
 
-    // 将 HUD 离屏 Canvas 作为 WebGL 纹理覆盖到全屏（微信端 & 浏览器端均通过此路径）
-    if (this.hud && this.hud.canvas) {
-      this.renderer.drawHUD(this.hud.canvas);
-    }
+    // 将 HUD 离屏 Canvas 作为 WebGL 纹理覆盖到全屏（微信端与浏览器统一路径）
+    this.renderer.drawHUD(this.hud.canvas);
+
   }
 
   /** 更新 HUD 显示 */
   _updateHUD() {
-    if (!this.hud) return; // 微信端无 HUD，直接跳过
+
 
     // FPS 计算
     this._frameCount++;
