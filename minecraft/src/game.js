@@ -250,7 +250,7 @@ class Game {
       cz,
       isThirdPerson: this.player.isThirdPerson(),
       blockIdx: this._blockTypeIndex,
-    });
+    }, this.input); // 传入 input，供 HUD 绘制虚拟摇杆和按钮
   }
 
   /** 画布大小变更 */

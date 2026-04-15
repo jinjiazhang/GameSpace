@@ -1,13 +1,13 @@
 /**
  * hud.js - 统一 HUD（浏览器 + 微信小游戏）
  *
- * 接收一个已创建好的 Canvas 2D 离屏画布，在其上绘制所有 HUD 元素。
+ * 接收一个已创建好的离屏 2D Canvas，在其上绘制所有 HUD 元素。
  * 暴露 this.canvas，由 renderer.drawHUD(hud.canvas) 通过 WebGL 纹理叠加到 3D 场景。
  *
  * 接口：
  *   new HUD(canvas)
  *   hud.hideLoading()
- *   hud.update({ pos, fps, cx, cz, isThirdPerson, blockIdx })
+ *   hud.update({ pos, fps, cx, cz, isThirdPerson, blockIdx }, input?)
  *   hud.canvas  ← 离屏画布，每帧由 renderer 作为纹理上传
  */
 
@@ -27,6 +27,7 @@ export class HUD {
     this._loading   = true;
     this._loadAlpha = 1.0;
     this._data      = null;
+    this._input     = null;
 
     this._blockNames = ['草地', '泥土', '石头', '木头', '树叶'];
 
@@ -36,7 +37,7 @@ export class HUD {
     this._drawLoadingScreen(1.0);
   }
 
-  // ── 公共接口 ─────────────────────────────────────────────────
+  // ── 公共接口 ──────────────────────────────────────────────────
 
   /** 首帧渲染完成后调用，淡出加载画面 */
   hideLoading() {
@@ -49,9 +50,11 @@ export class HUD {
   /**
    * 每帧更新 HUD，重绘离屏画布
    * @param {{ pos, fps, cx, cz, isThirdPerson, blockIdx }} data
+   * @param {Input|null} input - 传入 input 实例，绘制虚拟摇杆和按钮（触摸端）
    */
-  update(data) {
-    this._data = data;
+  update(data, input = null) {
+    this._data  = data;
+    this._input = input;
     this._drawHUD();
   }
 
@@ -129,14 +132,12 @@ export class HUD {
       this._roundRect(ctx, sx, barY, slotSize, slotSize, 5);
       ctx.stroke();
 
-      // 序号
       ctx.font         = `${Math.round(fs * 0.72)}px monospace`;
       ctx.fillStyle    = sel ? '#ffff88' : 'rgba(255,255,255,0.55)';
       ctx.textBaseline = 'top';
       ctx.textAlign    = 'left';
       ctx.fillText(`${i + 1}`, sx + slotSize * 0.1, barY + slotSize * 0.08);
 
-      // 名称
       ctx.font         = `bold ${Math.round(fs * 0.68)}px sans-serif`;
       ctx.fillStyle    = sel ? '#ffffff' : 'rgba(255,255,255,0.75)';
       ctx.textBaseline = 'middle';
@@ -144,7 +145,135 @@ export class HUD {
       ctx.fillText(names[i], sx + slotSize / 2, barY + slotSize * 0.65);
       ctx.textAlign    = 'left';
     }
+
+    // ── 虚拟摇杆 + 按钮（传入 input 时始终显示，不判断触摸设备）──
+    if (this._input) {
+      this._drawJoystick(ctx);
+      this._drawButtons(ctx);
+    }
   }
+
+  // ── 虚拟摇杆绘制 ──────────────────────────────────────────────
+
+  _drawJoystick(ctx) {
+    const js    = this._input.joystick;
+    const baseR = js.radius;
+    const baseX = this.width  * 0.18;
+    const baseY = this.height * 0.78;
+
+    // 底座圆
+    ctx.beginPath();
+    ctx.arc(baseX, baseY, baseR, 0, Math.PI * 2);
+    ctx.fillStyle   = 'rgba(255,255,255,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+
+    // 方向箭头
+    this._drawArrows(ctx, baseX, baseY, baseR);
+
+    // 操纵杆圆（活跃时跟随手指，否则居中）
+    let stickX = baseX, stickY = baseY;
+    if (js.active) {
+      const dx  = js.stickX - js.baseX;
+      const dy  = js.stickY - js.baseY;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const max = baseR;
+      if (len > max) {
+        stickX = baseX + dx / len * max;
+        stickY = baseY + dy / len * max;
+      } else {
+        stickX = baseX + dx;
+        stickY = baseY + dy;
+      }
+    }
+
+    const knobR = baseR * 0.46;
+    ctx.beginPath();
+    ctx.arc(stickX, stickY, knobR, 0, Math.PI * 2);
+    ctx.fillStyle   = js.active ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.28)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+  }
+
+  _drawArrows(ctx, cx, cy, r) {
+    const size = r * 0.22;
+    const dist = r * 0.72;
+    const dirs = [
+      [0,    -dist,  0           ],  // 上
+      [0,     dist,  Math.PI     ],  // 下
+      [-dist, 0,    -Math.PI / 2 ],  // 左
+      [ dist, 0,     Math.PI / 2 ],  // 右
+    ];
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    for (const [dx, dy, angle] of dirs) {
+      ctx.save();
+      ctx.translate(cx + dx, cy + dy);
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.moveTo(0,          -size);
+      ctx.lineTo( size * 0.7, size * 0.5);
+      ctx.lineTo(-size * 0.7, size * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // ── 按钮绘制 ──────────────────────────────────────────────────
+
+  _drawButtons(ctx) {
+    const layout = this._input.getBtnLayout();
+    if (!layout) return;
+
+    const { r, jump, attack, place, camToggle } = layout;
+    const btns = this._input.btns;
+
+    const labelMap = { jump: '跳跃', attack: '挖', place: '放', camToggle: '视角' };
+
+    const drawBtn = (btn, pressed, key) => {
+      const alpha = pressed ? 0.75 : 0.35;
+
+      ctx.beginPath();
+      ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+      ctx.fillStyle   = this._colorWithAlpha(btn.color, alpha);
+      ctx.fill();
+      ctx.strokeStyle = pressed ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.5)';
+      ctx.lineWidth   = pressed ? 2.5 : 1.5;
+      ctx.stroke();
+
+      // 主标签
+      ctx.font         = `bold ${Math.round(r * 0.6)}px sans-serif`;
+      ctx.fillStyle    = pressed ? '#ffffff' : 'rgba(255,255,255,0.85)';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(btn.label, btn.x, btn.y);
+
+      // 功能小字
+      ctx.font      = `${Math.round(r * 0.32)}px sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillText(labelMap[key] || '', btn.x, btn.y + r * 0.85);
+      ctx.textAlign = 'left';
+    };
+
+    drawBtn(jump,      btns.jump,      'jump');
+    drawBtn(attack,    btns.attack,    'attack');
+    drawBtn(place,     btns.place,     'place');
+    drawBtn(camToggle, btns.camToggle, 'camToggle');
+  }
+
+  /** 将 #rrggbb 颜色加 alpha 转为 rgba() */
+  _colorWithAlpha(hex, alpha) {
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+  }
+
+  // ── 加载画面 ──────────────────────────────────────────────────
 
   _drawLoadingScreen(alpha) {
     const ctx = this._ctx;
@@ -184,6 +313,8 @@ export class HUD {
     };
     requestAnimationFrame(step);
   }
+
+  // ── 工具 ──────────────────────────────────────────────────────
 
   _roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
