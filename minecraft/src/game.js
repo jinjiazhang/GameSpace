@@ -7,6 +7,7 @@
 import { Vec3, Mat4 } from './math.js';
 import { World } from './world.js';
 import { Renderer } from './renderer.js';
+import { EntityRenderer } from './entity.js';
 import { Player, PLAYER_HEIGHT } from './player.js';
 import { Input } from './input.js';
 import { CHUNK_WIDTH, CHUNK_DEPTH } from './chunk.js';
@@ -39,10 +40,14 @@ class Game {
     this._blockTypeIndex = 0;
 
     // 初始化子系统
-    this.world = new World(42);
+    this.world    = new World(42);
     this.renderer = new Renderer(gl, width, height);
-    this.player = new Player(8, 40, 8);
-    this.input = new Input(canvas, isWx);
+    this.entityRenderer = new EntityRenderer(gl);
+    this.player   = new Player(8, 40, 8);
+    this.input    = new Input(canvas, isWx);
+
+    // 实体列表（玩家也在其中，便于统一渲染）
+    this.entities = [this.player];
 
     // 将玩家放到合适高度
     this._spawnPlayer();
@@ -200,10 +205,13 @@ class Game {
     // 传入相机眼睛位置给渲染器，用于雾气计算
     this.renderer.render(viewMatrix, projMatrix, eye);
 
-    // 第三人称时渲染玩家模型
+    // 第三人称时通过 EntityRenderer 渲染所有实体模型
     if (this.player.isThirdPerson()) {
-      const parts = this.player.getModelParts();
-      this.renderer.drawPlayer(parts);
+      this.entityRenderer.drawEntities(
+        this.entities,
+        this.renderer._vpMatrix,
+        this.renderer._cameraPos,
+      );
     }
 
     // 更新 HUD
