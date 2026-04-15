@@ -111,14 +111,8 @@ class Game {
     this._update(dt);
     this._render();
 
-    // 下一帧
-    if (this.isWx) {
-      // 微信小游戏使用 requestAnimationFrame
-      const wxApi = globalThis.wx;
-      wxApi.requestAnimationFrame(() => this._loop());
-    } else {
-      requestAnimationFrame(() => this._loop());
-    }
+    // 下一帧（浏览器和微信小游戏都支持全局 requestAnimationFrame）
+    requestAnimationFrame(() => this._loop());
   }
 
   /** 更新逻辑 */

@@ -46,13 +46,7 @@ function transformModule(filePath) {
   const mod = moduleMap.get(filePath);
   let code = mod.code;
 
-  // 替换 export { ... } 为 module.exports = { ... }
-  code = code.replace(/export\s*\{([^}]*)\}/, (match, exports) => {
-    const items = exports.split(',').map(s => s.trim()).filter(Boolean);
-    return 'module.exports = {\n  ' + items.join(',\n  ') + '\n};';
-  });
-
-  // 替换 import { ... } from './xxx' 为 const { ... } = require()
+  // 1. 替换 import { ... } from './xxx' 为 const { ... } = __modules[id]
   code = code.replace(/import\s*\{([^}]*)\}\s*from\s*['"]\.\/([^'"]+)['"]/g, (match, imports, modPath) => {
     const depMod = modPath.endsWith('.js') ? modPath : modPath + '.js';
     const depPath = path.resolve(path.dirname(filePath), depMod);
@@ -60,6 +54,28 @@ function transformModule(filePath) {
     const items = imports.split(',').map(s => s.trim()).filter(Boolean);
     return `const { ${items.join(', ')} } = __modules[${depId}]`;
   });
+
+  // 2. 收集所有行内导出的名字，并去掉 export 关键字
+  //    匹配: export const/let/var/class/function xxx
+  const inlineExports = [];
+  code = code.replace(/^export\s+((?:const|let|var|class|function)\s+(\w+))/gm, (match, rest, name) => {
+    inlineExports.push(name);
+    return rest; // 去掉 export，保留声明本身
+  });
+
+  // 3. 替换 export default xxx 为 module.exports.default = xxx
+  code = code.replace(/^export\s+default\s+/gm, 'module.exports.default = ');
+
+  // 4. 替换 export { ... } 集中导出（兼容旧写法）
+  code = code.replace(/export\s*\{([^}]*)\}/g, (match, exports) => {
+    const items = exports.split(',').map(s => s.trim()).filter(Boolean);
+    return items.map(item => `module.exports.${item} = ${item};`).join('\n');
+  });
+
+  // 5. 将行内导出的名字追加到 module.exports
+  if (inlineExports.length > 0) {
+    code += '\n' + inlineExports.map(name => `module.exports.${name} = ${name};`).join('\n') + '\n';
+  }
 
   return code;
 }
