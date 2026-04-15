@@ -123,10 +123,9 @@ class Game {
     // 输入
     this.input.update(this.player);
 
-    // F 键切换视角
+    // F 键切换视角（单帧消费，player.update 末尾会清零）
     if (this.player.inputToggleCamera) {
       this.player.toggleCameraMode();
-      this.player.inputToggleCamera = false;
     }
 
     // 玩家物理
@@ -138,13 +137,12 @@ class Game {
     // 方块交互：破坏/放置
     this._handleBlockInteraction();
 
-    // 数字键切换方块类型
+    // 数字键切换方块类型（单帧消费，player.update 末尾会清零）
     if (this.player.blockSelectKey > 0) {
       this._blockTypeIndex = this.player.blockSelectKey - 1;
       if (this._blockTypeIndex < this._blockTypes.length) {
         this.selectedBlock = this._blockTypes[this._blockTypeIndex];
       }
-      this.player.blockSelectKey = 0;
     }
 
     // 重建脏区块的网格

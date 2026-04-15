@@ -206,6 +206,13 @@ class Player extends HumanoidEntity {
       this.position.y = 80;
       this.velocity.y = 0;
     }
+
+    // 单帧消费的输入标志位——用完即清零，防止下一帧残留
+    this.inputJump          = false;
+    this.clickLeft          = false;
+    this.clickRight         = false;
+    this.inputToggleCamera  = false;
+    this.blockSelectKey     = 0;
   }
 
   // ─── 碰撞 ─────────────────────────────────────────────────────────────────

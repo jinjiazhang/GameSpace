@@ -237,10 +237,12 @@ class Input {
       if (t.identifier === this._lookId) {
         this._lookId = null;
       }
+      // 按钮 identifier 解除绑定，btns 状态由 _applyTouch 单帧消费机制控制
       for (const btn of ['jump', 'attack', 'place']) {
         if (t.identifier === this._btnIds[btn]) {
           this._btnIds[btn] = null;
-          this.btns[btn]    = false;
+          // 注意：不在这里清零 btns[btn]，由 _applyTouch 在下一帧消费时清零
+          // 这样即使 touchend 比 update 先触发，按钮效果也不会丢失
         }
       }
     }
@@ -374,10 +376,10 @@ class Input {
       if (dx >  0.25) player.inputRight    = true;
     }
 
-    // 按钮
-    if (this.btns.jump)   player.inputJump  = true;
-    if (this.btns.attack) player.clickLeft  = true;
-    if (this.btns.place)  player.clickRight = true;
+    // 触摸按钮（单帧消费，避免持续触摸导致无限触发）
+    if (this.btns.jump)   { player.inputJump  = true; this.btns.jump   = false; }
+    if (this.btns.attack) { player.clickLeft  = true; this.btns.attack = false; }
+    if (this.btns.place)  { player.clickRight = true; this.btns.place  = false; }
   }
 }
 
