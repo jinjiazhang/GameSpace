@@ -130,6 +130,31 @@ export const PlayerFragmentShader = `
   }
 `;
 
+/**
+ * HUD 覆盖层着色器
+ * 将一张 2D Canvas 纹理以正交投影全屏覆盖到 WebGL 画布上
+ * aPosition: vec2，范围 [-1, 1]（NDC 坐标，直接省略矩阵运算）
+ * aTexCoord: vec2，范围 [0, 1]
+ */
+export const HudVertexShader = `
+  attribute vec2 aPosition;
+  attribute vec2 aTexCoord;
+  varying vec2 vTexCoord;
+  void main() {
+    gl_Position = vec4(aPosition, 0.0, 1.0);
+    vTexCoord = aTexCoord;
+  }
+`;
+
+export const HudFragmentShader = `
+  precision mediump float;
+  varying vec2 vTexCoord;
+  uniform sampler2D uTexture;
+  void main() {
+    gl_FragColor = texture2D(uTexture, vTexCoord);
+  }
+`;
+
 export const WaterFragmentShader = `
   precision mediump float;
   

@@ -19,13 +19,15 @@ class Game {
    * @param {HTMLCanvasElement|object} options.canvas - 画布
    * @param {WebGLRenderingContext} options.gl - WebGL 上下文
    * @param {boolean} options.isWx - 是否微信小游戏
+   * @param {object|null} options.hud - HUD 实例（仅浏览器端传入，微信端为 null）
    * @param {number} options.width - 画布宽
    * @param {number} options.height - 画布高
    */
-  constructor({ canvas, gl, isWx = false, width = 800, height = 600 }) {
+  constructor({ canvas, gl, isWx = false, hud = null, width = 800, height = 600 }) {
     this.canvas = canvas;
     this.gl = gl;
     this.isWx = isWx;
+    this.hud = hud;       // 浏览器端的 UI 管理器，微信端为 null
     this.width = width;
     this.height = height;
     this.running = false;
@@ -33,6 +35,7 @@ class Game {
     this._frameCount = 0;
     this._fpsTime = 0;
     this._fps = 60;
+    this._firstFrame = true;
 
     // 当前放置的方块类型（可切换）
     this.selectedBlock = Blocks.GRASS;
@@ -208,13 +211,18 @@ class Game {
       );
     }
 
-    // 更新 HUD
+    // 更新 HUD 数据并绘制到离屏 Canvas
     this._updateHUD();
+
+    // 将 HUD 离屏 Canvas 作为 WebGL 纹理覆盖到全屏（微信端 & 浏览器端均通过此路径）
+    if (this.hud && this.hud.canvas) {
+      this.renderer.drawHUD(this.hud.canvas);
+    }
   }
 
   /** 更新 HUD 显示 */
   _updateHUD() {
-    if (this.isWx) return; // 微信端不使用 DOM HUD
+    if (!this.hud) return; // 微信端无 HUD，直接跳过
 
     // FPS 计算
     this._frameCount++;
@@ -225,35 +233,23 @@ class Game {
       this._fpsTime = now;
     }
 
-    // 获取 DOM 元素（首次就绪后显示）
-    const hud = document.getElementById('hud');
-    if (!hud) return;
-
-    // 首次渲染后通知隐藏加载画面
-    if (hud.style.display === 'none') {
-      hud.style.display = 'block';
-      if (window._hideLoading) window._hideLoading();
+    // 首帧渲染后隐藏加载画面
+    if (this._firstFrame) {
+      this._firstFrame = false;
+      this.hud.hideLoading();
     }
 
     const p = this.player.position;
-    document.getElementById('hud-pos').textContent =
-      `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
-    document.getElementById('hud-fps').textContent = String(this._fps);
-
     const cx = Math.floor(p.x / CHUNK_WIDTH);
     const cz = Math.floor(p.z / CHUNK_DEPTH);
-    document.getElementById('hud-chunk').textContent = `${cx}, ${cz}`;
 
-    // 视角模式
-    const camEl = document.getElementById('hud-cam');
-    if (camEl) {
-      camEl.textContent = this.player.isThirdPerson() ? '第三人称' : '第一人称';
-    }
-
-    // 更新快捷栏选中状态
-    const slots = document.querySelectorAll('.hotbar-slot');
-    slots.forEach((slot, i) => {
-      slot.classList.toggle('selected', i === this._blockTypeIndex);
+    this.hud.update({
+      pos: p,
+      fps: this._fps,
+      cx,
+      cz,
+      isThirdPerson: this.player.isThirdPerson(),
+      blockIdx: this._blockTypeIndex,
     });
   }
 

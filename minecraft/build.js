@@ -84,7 +84,7 @@ function transformModule(filePath) {
 function build() {
   console.log('🔨 开始构建微信小游戏版本...');
 
-  // 从入口开始解析
+  // 从统一入口 main.js 开始解析（自动检测浏览器 / 微信环境）
   const entryFile = path.join(SRC_DIR, 'main.js');
   parseModule(entryFile);
 
