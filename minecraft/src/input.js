@@ -351,8 +351,22 @@ class Input {
     }
   }
 
+  _resetTouchState() {
+    this._joystickId = null;
+    this._lookId = null;
+    this.joystick.active = false;
+    this.joystick.stickX = this.joystick.baseX;
+    this.joystick.stickY = this.joystick.baseY;
+    for (const name of ['jump', 'attack', 'place']) {
+      this._btnIds[name] = null;
+      this._releaseAction(name);
+    }
+    this._hotbarTouchIds.clear();
+  }
+
   _initBrowser() {
     const doc = globalThis.document;
+    const win = globalThis.window;
     const canvas = this.canvas;
 
     doc.addEventListener('keydown', (e) => {
@@ -422,12 +436,29 @@ class Input {
       e.preventDefault();
       this._onTouchStart(Array.from(e.changedTouches).map(norm));
     }, { passive: false });
-    canvas.addEventListener('touchmove', (e) => {
+
+    // move/end/cancel 绑定到 document：
+    // 手指拖出 canvas 边界后再松开时，canvas 自己不一定能收到 touchend，
+    // 会导致摇杆 identifier 残留，角色持续移动。
+    doc.addEventListener('touchmove', (e) => {
+      if (!e.changedTouches || e.changedTouches.length === 0) return;
       e.preventDefault();
       this._onTouchMove(Array.from(e.changedTouches).map(norm));
     }, { passive: false });
-    canvas.addEventListener('touchend', (e) => this._onTouchEnd(Array.from(e.changedTouches).map(norm)));
-    canvas.addEventListener('touchcancel', (e) => this._onTouchEnd(Array.from(e.changedTouches).map(norm)));
+    doc.addEventListener('touchend', (e) => {
+      if (!e.changedTouches || e.changedTouches.length === 0) return;
+      this._onTouchEnd(Array.from(e.changedTouches).map(norm));
+    }, { passive: false });
+    doc.addEventListener('touchcancel', (e) => {
+      if (!e.changedTouches || e.changedTouches.length === 0) return;
+      this._onTouchEnd(Array.from(e.changedTouches).map(norm));
+    }, { passive: false });
+
+    // 浏览器失焦、切标签或系统打断手势时，强制清空触摸状态，避免摇杆残留
+    win.addEventListener('blur', () => this._resetTouchState());
+    doc.addEventListener('visibilitychange', () => {
+      if (doc.hidden) this._resetTouchState();
+    });
   }
 
   _initWx() {
