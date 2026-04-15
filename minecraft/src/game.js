@@ -258,6 +258,8 @@ class Game {
     this.width = width;
     this.height = height;
     this.renderer.resize(width, height);
+    this.input.resize();
+    this.hud.resize(width, height);
   }
 }
 

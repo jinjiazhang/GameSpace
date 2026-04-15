@@ -15,10 +15,14 @@ export class HUD {
   /**
    * @param {HTMLCanvasElement|object} canvas - 离屏 2D 画布（浏览器或微信小游戏）
    */
-  constructor(canvas) {
+  constructor(canvas, dpr) {
     this.canvas = canvas;
-    this.width  = canvas.width;
-    this.height = canvas.height;
+    // dpr：物理像素/逻辑像素比率。浏览器传 window.devicePixelRatio，微信传 pixelRatio
+    // input._buildLayout 使用逻辑像素坐标，HUD 绘制也统一用逻辑像素，通过 ctx.scale(dpr) 对齐
+    this._dpr   = dpr || 1;
+    // width/height 存储逻辑像素（= 物理像素 / dpr）
+    this.width  = Math.round(canvas.width  / this._dpr);
+    this.height = Math.round(canvas.height / this._dpr);
 
     this._fontSize = Math.max(14, Math.round(this.width / 35));
     this._padding  = this._fontSize * 0.7;
@@ -33,11 +37,25 @@ export class HUD {
 
     this._ctx = canvas.getContext('2d');
 
-    // 首帧立即画加载画面
+    // 首帧立即画加载画面（应用 scale 确保坐标一致）
+    this._ctx.save();
+    this._ctx.scale(this._dpr, this._dpr);
     this._drawLoadingScreen(1.0);
+    this._ctx.restore();
   }
 
   // ── 公共接口 ──────────────────────────────────────────────────
+
+  /** 画布尺寸变更时调用（物理像素尺寸） */
+  resize(width, height) {
+    this.canvas.width  = width;
+    this.canvas.height = height;
+    this.width  = Math.round(width  / this._dpr);
+    this.height = Math.round(height / this._dpr);
+    this._fontSize = Math.max(14, Math.round(this.width / 35));
+    this._padding  = this._fontSize * 0.7;
+    this._lineH    = this._fontSize * 1.6;
+  }
 
   /** 首帧渲染完成后调用，淡出加载画面 */
   hideLoading() {
@@ -62,19 +80,27 @@ export class HUD {
 
   _drawHUD() {
     const ctx = this._ctx;
-    const w   = this.width;
-    const h   = this.height;
+    const dpr = this._dpr;
+    const w   = this.width;   // 逻辑像素宽
+    const h   = this.height;  // 逻辑像素高
     const fs  = this._fontSize;
     const pad = this._padding;
     const lh  = this._lineH;
 
-    ctx.clearRect(0, 0, w, h);
+    // 先清空物理像素画布，再 scale 切换到逻辑像素坐标系绘制
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.save();
+    ctx.scale(dpr, dpr);
 
     if (this._loading) {
       this._drawLoadingScreen(this._loadAlpha);
+      ctx.restore();
       return;
     }
-    if (!this._data) return;
+    if (!this._data) {
+      ctx.restore();
+      return;
+    }
 
     const { pos, fps, cx, cz, isThirdPerson, blockIdx } = this._data;
 
@@ -151,6 +177,8 @@ export class HUD {
       this._drawJoystick(ctx);
       this._drawButtons(ctx);
     }
+
+    ctx.restore(); // 恢复 scale 状态
   }
 
   // ── 虚拟摇杆绘制 ──────────────────────────────────────────────
@@ -158,8 +186,10 @@ export class HUD {
   _drawJoystick(ctx) {
     const js    = this._input.joystick;
     const baseR = js.radius;
-    const baseX = this.width  * 0.18;
-    const baseY = this.height * 0.78;
+    // 固定圆心：从 input layout 取，保证视觉和命中完全一致
+    const layout = this._input.getBtnLayout();
+    const baseX  = layout.jsCX;
+    const baseY  = layout.jsCY;
 
     // 底座圆
     ctx.beginPath();
@@ -229,12 +259,10 @@ export class HUD {
     const layout = this._input.getBtnLayout();
     if (!layout) return;
 
-    const { r, jump, attack, place, camToggle } = layout;
+    const { r, jump, attack, place } = layout;
     const btns = this._input.btns;
 
-    const labelMap = { jump: '跳跃', attack: '挖', place: '放', camToggle: '视角' };
-
-    const drawBtn = (btn, pressed, key) => {
+    const drawBtn = (btn, pressed, label) => {
       const alpha = pressed ? 0.75 : 0.35;
 
       ctx.beginPath();
@@ -246,23 +274,17 @@ export class HUD {
       ctx.stroke();
 
       // 主标签
-      ctx.font         = `bold ${Math.round(r * 0.6)}px sans-serif`;
+      ctx.font         = `bold ${Math.round(r * 0.55)}px sans-serif`;
       ctx.fillStyle    = pressed ? '#ffffff' : 'rgba(255,255,255,0.85)';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(btn.label, btn.x, btn.y);
-
-      // 功能小字
-      ctx.font      = `${Math.round(r * 0.32)}px sans-serif`;
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
-      ctx.fillText(labelMap[key] || '', btn.x, btn.y + r * 0.85);
+      ctx.fillText(label, btn.x, btn.y);
       ctx.textAlign = 'left';
     };
 
-    drawBtn(jump,      btns.jump,      'jump');
-    drawBtn(attack,    btns.attack,    'attack');
-    drawBtn(place,     btns.place,     'place');
-    drawBtn(camToggle, btns.camToggle, 'camToggle');
+    drawBtn(jump,   btns.jump,   '跳');
+    drawBtn(attack, btns.attack, '挖');
+    drawBtn(place,  btns.place,  '放');
   }
 
   /** 将 #rrggbb 颜色加 alpha 转为 rgba() */
@@ -305,10 +327,13 @@ export class HUD {
       this._loadAlpha -= 0.06;
       if (this._loadAlpha <= 0) {
         this._loadAlpha = 0;
-        this._ctx.clearRect(0, 0, this.width, this.height);
+        this._ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         return;
       }
+      this._ctx.save();
+      this._ctx.scale(this._dpr, this._dpr);
       this._drawLoadingScreen(this._loadAlpha);
+      this._ctx.restore();
       requestAnimationFrame(step);
     };
     requestAnimationFrame(step);

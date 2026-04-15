@@ -17,10 +17,12 @@ function initBrowser() {
     return;
   }
 
-  // 全屏适配
+  // 全屏适配：统一使用 CSS 逻辑像素，触摸坐标和布局坐标天然一致，无需 DPR 换算
   function resize() {
-    canvas.width = window.innerWidth;
+    canvas.width  = window.innerWidth;
     canvas.height = window.innerHeight;
+    canvas.style.width  = canvas.width  + 'px';
+    canvas.style.height = canvas.height + 'px';
     if (window._game) {
       window._game.resize(canvas.width, canvas.height);
     }
@@ -48,11 +50,12 @@ function initBrowser() {
     console.warn('OES_element_index_uint 不可用，大区块可能无法渲染');
   }
 
-  // 统一 HUD：外部创建离屏 canvas，直接传入
+  // 统一 HUD：外部创建离屏 canvas，直接传入；dpr 用于坐标系换算
+  const dpr = window.devicePixelRatio || 1;
   const hudCanvas = globalThis.document.createElement('canvas');
   hudCanvas.width  = canvas.width;
   hudCanvas.height = canvas.height;
-  const hud = new HUD(hudCanvas);
+  const hud = new HUD(hudCanvas, dpr);
 
   // 创建并启动游戏
   const game = new Game({
@@ -96,10 +99,11 @@ function initWx() {
   canvas.height = ph;
 
   // 统一 HUD：微信第二次 createCanvas() 返回离屏 2D 画布，直接传入
+  const dpr = info.pixelRatio || 1;
   const hudCanvas = wx.createCanvas();
   hudCanvas.width  = pw;
   hudCanvas.height = ph;
-  const hud = new HUD(hudCanvas);
+  const hud = new HUD(hudCanvas, dpr);
 
   const game = new Game({
     canvas,

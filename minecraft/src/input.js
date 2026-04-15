@@ -1,208 +1,255 @@
 /**
  * input.js - 输入抽象层
  *
- * 浏览器：键盘 + 鼠标指针锁定 + 触摸（手机浏览器）
- * 微信小游戏：wx.onTouch* 触摸事件
+ * 桌面浏览器：键盘 + 鼠标指针锁定
+ * 触摸端（手机浏览器 / 微信小游戏）：
+ *   左半屏     → 随指浮现虚拟摇杆（移动）
+ *   右半屏     → 视角拖拽
+ *   右下 3 按钮 → 跳跃 / 挖掘（左键）/ 放置（右键）
  *
- * 虚拟摇杆布局（触摸端）：
- *   左侧区域   → 虚拟摇杆（移动）
- *   右侧区域   → 视角拖拽（滑动）
- *   右下按钮区  → 跳跃(A) / 破坏(□) / 放置(△) / 视角切换(F)
- *
- * 向外暴露只读属性（供 HUD 绘制）：
+ * 暴露给 HUD 的属性：
  *   this.joystick   = { active, baseX, baseY, stickX, stickY, radius }
- *   this.btns       = { jump, attack, place, camToggle } (每帧按下状态)
+ *   this.btns       = { jump, attack, place }
+ *   this.getBtnLayout() → { r, jump, attack, place }
  */
 
-// 按钮布局（相对右下角，单位 px，运行时根据画布尺寸初始化）
-const BTN_RADIUS_RATIO  = 0.055;   // 按钮半径 / 画布短边
-const BTN_MARGIN_RATIO  = 0.13;    // 距右/下边缘的间距比例
-const JOYSTICK_RADIUS   = 60;      // 摇杆底座半径
+const JOYSTICK_RADIUS  = 0.10;  // 底座半径 / 画布短边
+const JOYSTICK_X_RATIO = 0.13;  // 摇杆圆心 X / 画布宽（与 hud.js 保持一致）
+const JOYSTICK_Y_RATIO = 0.78;  // 摇杆圆心 Y / 画布高（与 hud.js 保持一致）
+const BTN_RADIUS_RATIO = 0.065; // 按钮半径 / 画布短边
+const BTN_MARGIN       = 0.06;  // 边距 / 画布短边
 
 class Input {
-  /**
-   * @param {object} canvas  - 主 Canvas（用于尺寸）
-   * @param {boolean} isWx   - 是否微信小游戏
-   */
   constructor(canvas, isWx = false) {
     this.canvas = canvas;
     this.isWx   = isWx;
 
-    // 视角增量
+    // 视角增量（每帧累积，读取后清零）
     this.mouseDX = 0;
     this.mouseDY = 0;
     this.pointerLocked = false;
 
-    // 供 HUD 读取的摇杆状态
+    // 摇杆状态（供 HUD 绘制）
     this.joystick = {
       active: false,
-      baseX: 0, baseY: 0,     // 底座圆心（首次按下位置）
-      stickX: 0, stickY: 0,   // 操纵杆圆心（当前触摸位置，已夹紧）
-      radius: JOYSTICK_RADIUS,
+      baseX: 0, baseY: 0,
+      stickX: 0, stickY: 0,
+      radius: 60, // 运行时动态计算
     };
 
-    // 供 HUD 读取的按钮状态（每帧）
-    this.btns = { jump: false, attack: false, place: false, camToggle: false };
+    // 按钮状态（供 HUD 绘制 + 游戏逻辑）
+    this.btns = { jump: false, attack: false, place: false };
 
-    // 内部触摸 ID
-    this._joystickTouchId = null;
-    this._lookTouchId     = null;
-    this._lastLookX = 0;
-    this._lastLookY = 0;
+    // 内部触摸追踪
+    this._joystickId  = null;
+    this._lookId      = null;
+    this._lastLookX   = 0;
+    this._lastLookY   = 0;
+    this._btnIds      = { jump: null, attack: null, place: null };
 
-    // 按钮触摸 ID（防多指误触）
-    this._btnTouchIds = { jump: null, attack: null, place: null, camToggle: null };
+    // 按钮布局（延迟初始化）
+    this._layout = null;
 
-    // 按钮布局（初始化后填入）
-    this._btnLayout = null;
+    // 键盘状态（浏览器）
+    this._keys       = {};
+    this._keyPressed = {};
+
+    // 鼠标按键单帧标记
+    this._mouseLeft  = false;
+    this._mouseRight = false;
+    this._btnMouseKey = null;
 
     if (isWx) {
-      this._initWxInput();
+      this._initWx();
     } else {
-      this._initBrowserInput();
+      this._initBrowser();
     }
   }
 
-  // ────────────────────────────────────────────────────────────
-  // 按钮布局计算（触摸端共用）
-  // ────────────────────────────────────────────────────────────
+  // ─── 坐标换算（浏览器端 clientX/Y → canvas 逻辑坐标）──────────────
 
-  _buildBtnLayout() {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
-    const r = Math.round(Math.min(W, H) * BTN_RADIUS_RATIO);
-    const m = Math.round(Math.min(W, H) * BTN_MARGIN_RATIO);
-
-    // 右下角 2×2 菱形布局
-    //   camToggle(F) 在最右
-    //   jump(A)      在最下
-    //   attack(□)    在中左
-    //   place(△)     在中上
-    const cx = W - m - r;
-    const cy = H - m - r;
-    const gap = r * 2.3;
-
+  _toCanvas(clientX, clientY) {
+    if (this.isWx) {
+      // 微信端 clientX/Y 已经是 canvas 坐标
+      return { x: clientX, y: clientY };
+    }
+    // 浏览器端：canvas 尺寸 = CSS 逻辑像素，clientX/Y 也是逻辑像素，直接减偏移即可
+    const rect = this.canvas.getBoundingClientRect();
     return {
-      r,
-      jump:      { x: cx,        y: cy,        label: 'A',  color: '#44bb44' },
-      attack:    { x: cx - gap,  y: cy - r,    label: '□',  color: '#cc4444' },
-      place:     { x: cx,        y: cy - gap,  label: '△',  color: '#4488dd' },
-      camToggle: { x: cx - r,    y: cy - gap - r, label: 'F', color: '#cc9900' },
+      x: clientX - rect.left,
+      y: clientY - rect.top,
     };
   }
 
-  // ────────────────────────────────────────────────────────────
-  // 触摸命中测试
-  // ────────────────────────────────────────────────────────────
+  // ─── 按钮布局 ──────────────────────────────────────────────────────
 
-  _hitBtn(tx, ty) {
-    if (!this._btnLayout) return null;
-    const { r, jump, attack, place, camToggle } = this._btnLayout;
-    const hit = (b) => {
-      const dx = tx - b.x, dy = ty - b.y;
-      return dx * dx + dy * dy <= r * r;
+  _buildLayout() {
+    // 必须用与 _toCanvas 输出相同坐标系的尺寸（逻辑像素）
+    // 浏览器：getBoundingClientRect().width = CSS 逻辑宽度
+    // 微信：windowWidth = 逻辑宽度
+    let W, H;
+    if (this.isWx) {
+      const info = globalThis.wx.getSystemInfoSync();
+      W = info.windowWidth;
+      H = info.windowHeight;
+    } else {
+      const rect = this.canvas.getBoundingClientRect();
+      W = rect.width  > 0 ? rect.width  : this.canvas.width;
+      H = rect.height > 0 ? rect.height : this.canvas.height;
+    }
+    const S = Math.min(W, H);
+    const r      = Math.round(S * BTN_RADIUS_RATIO);
+    const m      = Math.round(S * BTN_MARGIN);
+    const jsR    = Math.round(S * JOYSTICK_RADIUS);
+    const gap    = r * 2.5;
+
+    const jsCX = Math.round(W * JOYSTICK_X_RATIO);
+    const jsCY = Math.round(H * JOYSTICK_Y_RATIO);
+
+    const jx = W - m - r;
+    const jy = H - m - r;
+
+    this.joystick.radius  = jsR;
+    this.joystick.centerX = jsCX;
+    this.joystick.centerY = jsCY;
+
+    const layout = {
+      r, jsR, jsCX, jsCY,
+      jump:   { x: jx,       y: jy,       label: '跳', color: '#44bb44' },
+      attack: { x: jx - gap, y: jy,       label: '挖', color: '#cc4444' },
+      place:  { x: jx,       y: jy - gap, label: '放', color: '#4488dd' },
     };
-    if (hit(jump))      return 'jump';
-    if (hit(attack))    return 'attack';
-    if (hit(place))     return 'place';
-    if (hit(camToggle)) return 'camToggle';
+
+    // [DEBUG] 打印布局信息（上线前删除）
+    console.log(`[Input] buildLayout canvas=${W}x${H} jsCenter=(${jsCX},${jsCY}) jsR=${jsR}`);
+    console.log(`[Input] btns jump=(${layout.jump.x},${layout.jump.y}) attack=(${layout.attack.x},${layout.attack.y}) place=(${layout.place.x},${layout.place.y}) r=${r}`);
+
+    return layout;
+  }
+
+  _getLayout() {
+    if (!this._layout) this._layout = this._buildLayout();
+    return this._layout;
+  }
+
+  /** 供 HUD 读取按钮布局 */
+  getBtnLayout() {
+    return this._getLayout();
+  }
+
+  /** 画布尺寸变更时必须调用，清除布局缓存 */
+  resize() {
+    this._layout = null;
+  }
+
+  // ─── 触摸命中测试 ──────────────────────────────────────────────────
+
+  _hitBtn(x, y) {
+    const L = this._getLayout();
+    const { r } = L;
+    for (const name of ['jump', 'attack', 'place']) {
+      const b  = L[name];
+      const dx = x - b.x, dy = y - b.y;
+      if (dx * dx + dy * dy <= r * r) return name;
+    }
     return null;
   }
 
-  // ────────────────────────────────────────────────────────────
-  // 统一触摸处理（浏览器触摸 + 微信触摸）
-  // ────────────────────────────────────────────────────────────
+  _inJoystickZone(x, y, L) {
+    const dx = x - L.jsCX, dy = y - L.jsCY;
+    return dx * dx + dy * dy <= L.jsR * L.jsR * 4;
+  }
+
+  // ─── 统一触摸处理 ──────────────────────────────────────────────────
 
   _onTouchStart(touches) {
-    // 延迟初始化按钮布局（等画布尺寸确定后）
-    if (!this._btnLayout) this._btnLayout = this._buildBtnLayout();
+    const L = this._getLayout();
 
     for (const t of touches) {
-      const tx = t.clientX, ty = t.clientY;
-      const W  = this.canvas.width;
+      const { x, y } = this._toCanvas(t.clientX, t.clientY);
 
-      // 先检测按钮区（优先级最高）
-      const btn = this._hitBtn(tx, ty);
-      if (btn && this._btnTouchIds[btn] === null) {
-        this._btnTouchIds[btn] = t.identifier;
-        this.btns[btn] = true;
+      // 1. 优先检测右下角按钮（最高优先级）
+      const btn = this._hitBtn(x, y);
+      // [DEBUG]
+      console.log(`[Input] touchStart client=(${t.clientX.toFixed(0)},${t.clientY.toFixed(0)}) canvas=(${x.toFixed(0)},${y.toFixed(0)}) hitBtn=${btn} jsZone=${this._inJoystickZone(x,y,L)}`);
+      if (btn !== null && this._btnIds[btn] === null) {
+        this._btnIds[btn] = t.identifier;
+        this.btns[btn]    = true;
         continue;
       }
 
-      // 左半屏 → 摇杆
-      if (tx < W * 0.45 && this._joystickTouchId === null) {
-        this._joystickTouchId = t.identifier;
-        this.joystick.active = true;
-        this.joystick.baseX  = tx;
-        this.joystick.baseY  = ty;
-        this.joystick.stickX = tx;
-        this.joystick.stickY = ty;
+      // 2. 命中摇杆固定圆内 → 摇杆
+      if (this._inJoystickZone(x, y, L) && this._joystickId === null) {
+        this._joystickId         = t.identifier;
+        this.joystick.active     = true;
+        this.joystick.baseX      = L.jsCX;
+        this.joystick.baseY      = L.jsCY;
+        this.joystick.stickX     = L.jsCX;
+        this.joystick.stickY     = L.jsCY;
         continue;
       }
 
-      // 右侧非按钮区 → 视角拖拽
-      if (this._lookTouchId === null) {
-        this._lookTouchId = t.identifier;
-        this._lastLookX   = tx;
-        this._lastLookY   = ty;
+      // 3. 其余区域 → 视角拖拽
+      if (this._lookId === null) {
+        this._lookId    = t.identifier;
+        this._lastLookX = x;
+        this._lastLookY = y;
       }
     }
   }
 
   _onTouchMove(touches) {
     for (const t of touches) {
-      if (t.identifier === this._joystickTouchId) {
-        // 更新摇杆
-        const dx  = t.clientX - this.joystick.baseX;
-        const dy  = t.clientY - this.joystick.baseY;
+      const { x, y } = this._toCanvas(t.clientX, t.clientY);
+
+      if (t.identifier === this._joystickId) {
+        // 以固定圆心为基准
+        const bx  = this.joystick.baseX;
+        const by  = this.joystick.baseY;
+        const dx  = x - bx;
+        const dy  = y - by;
         const len = Math.sqrt(dx * dx + dy * dy);
         const max = this.joystick.radius;
         if (len > max) {
-          this.joystick.stickX = this.joystick.baseX + dx / len * max;
-          this.joystick.stickY = this.joystick.baseY + dy / len * max;
+          this.joystick.stickX = bx + dx / len * max;
+          this.joystick.stickY = by + dy / len * max;
         } else {
-          this.joystick.stickX = t.clientX;
-          this.joystick.stickY = t.clientY;
+          this.joystick.stickX = x;
+          this.joystick.stickY = y;
         }
-      } else if (t.identifier === this._lookTouchId) {
-        // 视角
-        this.mouseDX += (t.clientX - this._lastLookX) * 1.5;
-        this.mouseDY += (t.clientY - this._lastLookY) * 1.5;
-        this._lastLookX = t.clientX;
-        this._lastLookY = t.clientY;
+      } else if (t.identifier === this._lookId) {
+        this.mouseDX += (x - this._lastLookX) * 1.5;
+        this.mouseDY += (y - this._lastLookY) * 1.5;
+        this._lastLookX = x;
+        this._lastLookY = y;
       }
     }
   }
 
   _onTouchEnd(touches) {
     for (const t of touches) {
-      if (t.identifier === this._joystickTouchId) {
-        this._joystickTouchId  = null;
-        this.joystick.active   = false;
-        this.joystick.stickX   = this.joystick.baseX;
-        this.joystick.stickY   = this.joystick.baseY;
+      if (t.identifier === this._joystickId) {
+        this._joystickId     = null;
+        this.joystick.active = false;
+        this.joystick.stickX = this.joystick.baseX;
+        this.joystick.stickY = this.joystick.baseY;
       }
-      if (t.identifier === this._lookTouchId) {
-        this._lookTouchId = null;
+      if (t.identifier === this._lookId) {
+        this._lookId = null;
       }
-      for (const btn of ['jump', 'attack', 'place', 'camToggle']) {
-        if (t.identifier === this._btnTouchIds[btn]) {
-          this._btnTouchIds[btn] = null;
-          this.btns[btn]         = false;
+      for (const btn of ['jump', 'attack', 'place']) {
+        if (t.identifier === this._btnIds[btn]) {
+          this._btnIds[btn] = null;
+          this.btns[btn]    = false;
         }
       }
     }
   }
 
-  // ────────────────────────────────────────────────────────────
-  // 浏览器初始化
-  // ────────────────────────────────────────────────────────────
+  // ─── 浏览器初始化 ──────────────────────────────────────────────────
 
-  _initBrowserInput() {
-    this._keys       = {};
-    this._keyPressed = {};
-
-    const doc = globalThis.document;
+  _initBrowser() {
+    const doc    = globalThis.document;
     const canvas = this.canvas;
 
     // 键盘
@@ -216,10 +263,7 @@ class Input {
       this._keyPressed[e.code] = false;
     });
 
-    // 指针锁
-    canvas.addEventListener('click', () => {
-      if (!this.pointerLocked) canvas.requestPointerLock();
-    });
+    // 指针锁定
     doc.addEventListener('pointerlockchange', () => {
       this.pointerLocked = doc.pointerLockElement === canvas;
     });
@@ -231,123 +275,109 @@ class Input {
     });
 
     // 鼠标按键
-    this._mouseClickLeft  = false;
-    this._mouseClickRight = false;
     canvas.addEventListener('mousedown', (e) => {
-      if (!this.pointerLocked) return;
-      if (e.button === 0) this._mouseClickLeft  = true;
-      if (e.button === 2) this._mouseClickRight = true;
-      e.preventDefault();
+      if (this.pointerLocked) {
+        if (e.button === 0) this._mouseLeft  = true;
+        if (e.button === 2) this._mouseRight = true;
+        e.preventDefault();
+        return;
+      }
+      // 未锁定时检测虚拟按钮
+      const { x, y } = this._toCanvas(e.clientX, e.clientY);
+      const btn = this._hitBtn(x, y);
+      if (btn) {
+        this.btns[btn]    = true;
+        this._btnMouseKey = btn;
+        e.preventDefault();
+      } else {
+        canvas.requestPointerLock();
+      }
+    });
+    canvas.addEventListener('mouseup', (e) => {
+      if (this._btnMouseKey) {
+        this.btns[this._btnMouseKey] = false;
+        this._btnMouseKey = null;
+        e.preventDefault();
+      }
+      if (this.pointerLocked) {
+        this._mouseLeft  = false;
+        this._mouseRight = false;
+      }
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // 触摸（手机浏览器）
-    const normTouch = (t) => ({ identifier: t.identifier, clientX: t.clientX, clientY: t.clientY });
-    canvas.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      this._onTouchStart(Array.from(e.changedTouches).map(normTouch));
-    }, { passive: false });
-    canvas.addEventListener('touchmove', (e) => {
-      e.preventDefault();
-      this._onTouchMove(Array.from(e.changedTouches).map(normTouch));
-    }, { passive: false });
-    canvas.addEventListener('touchend',    (e) => this._onTouchEnd(Array.from(e.changedTouches).map(normTouch)));
-    canvas.addEventListener('touchcancel', (e) => this._onTouchEnd(Array.from(e.changedTouches).map(normTouch)));
+    const norm = (t) => ({ identifier: t.identifier, clientX: t.clientX, clientY: t.clientY });
+    canvas.addEventListener('touchstart',  (e) => { e.preventDefault(); this._onTouchStart(Array.from(e.changedTouches).map(norm)); }, { passive: false });
+    canvas.addEventListener('touchmove',   (e) => { e.preventDefault(); this._onTouchMove (Array.from(e.changedTouches).map(norm)); }, { passive: false });
+    canvas.addEventListener('touchend',    (e) => { this._onTouchEnd(Array.from(e.changedTouches).map(norm)); });
+    canvas.addEventListener('touchcancel', (e) => { this._onTouchEnd(Array.from(e.changedTouches).map(norm)); });
   }
 
-  // ────────────────────────────────────────────────────────────
-  // 微信初始化
-  // ────────────────────────────────────────────────────────────
+  // ─── 微信初始化 ────────────────────────────────────────────────────
 
-  _initWxInput() {
-    const wx = globalThis.wx;
-    const normTouch = (t) => ({ identifier: t.identifier, clientX: t.clientX, clientY: t.clientY });
-
-    wx.onTouchStart  ((e) => this._onTouchStart(e.changedTouches.map(normTouch)));
-    wx.onTouchMove   ((e) => this._onTouchMove (e.changedTouches.map(normTouch)));
-    wx.onTouchEnd    ((e) => this._onTouchEnd  (e.changedTouches.map(normTouch)));
-    wx.onTouchCancel ((e) => this._onTouchEnd  (e.changedTouches.map(normTouch)));
+  _initWx() {
+    const wx   = globalThis.wx;
+    const norm = (t) => ({ identifier: t.identifier, clientX: t.clientX, clientY: t.clientY });
+    wx.onTouchStart  ((e) => this._onTouchStart(e.changedTouches.map(norm)));
+    wx.onTouchMove   ((e) => this._onTouchMove (e.changedTouches.map(norm)));
+    wx.onTouchEnd    ((e) => this._onTouchEnd  (e.changedTouches.map(norm)));
+    wx.onTouchCancel ((e) => this._onTouchEnd  (e.changedTouches.map(norm)));
   }
 
-  // ────────────────────────────────────────────────────────────
-  // 每帧更新玩家输入
-  // ────────────────────────────────────────────────────────────
+  // ─── 每帧更新 ──────────────────────────────────────────────────────
 
   update(player) {
-    if (this.isWx) {
-      this._updateTouch(player);
-    } else {
-      this._updateBrowser(player);
-    }
+    if (!this.isWx) this._applyKeyboard(player);
+    this._applyTouch(player);
+
+    player.onMouseMove(this.mouseDX, this.mouseDY);
+    this.mouseDX = 0;
+    this.mouseDY = 0;
   }
 
-  _updateBrowser(player) {
-    const k = this._keys || {};
+  _applyKeyboard(player) {
+    const k  = this._keys       || {};
+    const kp = this._keyPressed || {};
 
-    // 键盘
     player.inputForward  = !!(k['KeyW'] || k['ArrowUp']);
     player.inputBackward = !!(k['KeyS'] || k['ArrowDown']);
     player.inputLeft     = !!(k['KeyA'] || k['ArrowLeft']);
     player.inputRight    = !!(k['KeyD'] || k['ArrowRight']);
     player.inputJump     = !!(k['Space']);
 
-    // 鼠标交互
-    player.clickLeft  = this._mouseClickLeft;
-    player.clickRight = this._mouseClickRight;
-    this._mouseClickLeft  = false;
-    this._mouseClickRight = false;
+    player.clickLeft  = this._mouseLeft;
+    player.clickRight = this._mouseRight;
+    this._mouseLeft   = false;
+    this._mouseRight  = false;
 
-    // 数字键切换方块（1-5）
-    const kp = this._keyPressed || {};
+    // 数字键切换方块
     player.blockSelectKey = 0;
     for (let i = 1; i <= 5; i++) {
       if (kp[`Digit${i}`]) { player.blockSelectKey = i; kp[`Digit${i}`] = false; }
     }
 
-    // F 键切换视角（单次触发）
+    // F 键切换视角（单次）
     player.inputToggleCamera = !!(kp['KeyF']);
     if (kp['KeyF']) kp['KeyF'] = false;
-
-    // 触摸叠加（手机浏览器，摇杆 + 按钮）
-    this._applyTouchToPlayer(player);
-
-    player.onMouseMove(this.mouseDX, this.mouseDY);
-    this.mouseDX = 0;
-    this.mouseDY = 0;
   }
 
-  _updateTouch(player) {
-    this._applyTouchToPlayer(player);
-
-    player.onMouseMove(this.mouseDX, this.mouseDY);
-    this.mouseDX = 0;
-    this.mouseDY = 0;
-  }
-
-  /** 将摇杆/按钮状态写入 player（键盘优先叠加，不覆盖已有 true） */
-  _applyTouchToPlayer(player) {
+  _applyTouch(player) {
+    // 摇杆 → 移动方向
     const js = this.joystick;
     if (js.active) {
       const dx = (js.stickX - js.baseX) / js.radius;
       const dy = (js.stickY - js.baseY) / js.radius;
-      if (dy < -0.2) player.inputForward  = true;
-      if (dy >  0.2) player.inputBackward = true;
-      if (dx < -0.2) player.inputLeft     = true;
-      if (dx >  0.2) player.inputRight    = true;
+      if (dy < -0.25) player.inputForward  = true;
+      if (dy >  0.25) player.inputBackward = true;
+      if (dx < -0.25) player.inputLeft     = true;
+      if (dx >  0.25) player.inputRight    = true;
     }
-    if (this.btns.jump)      player.inputJump           = true;
-    if (this.btns.attack)    player.clickLeft            = true;
-    if (this.btns.place)     player.clickRight           = true;
-    if (this.btns.camToggle) {
-      player.inputToggleCamera = true;
-      this.btns.camToggle = false; // 单次消费
-    }
-  }
 
-  /** 返回按钮布局（供 HUD 绘制使用） */
-  getBtnLayout() {
-    if (!this._btnLayout) this._btnLayout = this._buildBtnLayout();
-    return this._btnLayout;
+    // 按钮
+    if (this.btns.jump)   player.inputJump  = true;
+    if (this.btns.attack) player.clickLeft  = true;
+    if (this.btns.place)  player.clickRight = true;
   }
 }
 
